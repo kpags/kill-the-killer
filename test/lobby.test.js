@@ -92,6 +92,51 @@ test('rooms synchronize human numbering and enforce slot and player permissions'
   assert.match((await guest.command('join', { code })).error, /not found/)
 })
 
+test('mode selection is host-only, synchronized, and restored on join and reconnect', { timeout: 5000 }, async (context) => {
+  const connect = await setup(context)
+  const host = await connect()
+  const created = await host.command('create')
+  assert.equal(created.room.selectedModeId, 'last_man_standing')
+  assert.equal(created.room.slots.length, 6)
+
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  assert.equal(joined.room.selectedModeId, 'last_man_standing')
+  assert.match((await guest.command('select_mode', { modeId: 'Hitman' })).error, /Only the host/)
+  await host.command('set_ready', { playerId: created.playerId, ready: true })
+  await guest.command('set_ready', { playerId: joined.playerId, ready: true })
+
+  for (const modeId of ['Hitman', 'last_man_standing', 'Hitman']) {
+    assert.equal((await host.command('select_mode', { modeId })).error, undefined)
+    const update = await guest.waitFor(({ type, room }) => type === 'room' && room.selectedModeId === modeId)
+    assert.equal(update.room.slots[0].ready, true)
+    assert.equal(update.room.slots[1].ready, true)
+  }
+  for (const modeId of [undefined, null, 42, {}, [], 'missing', 'hitman', '__proto__', 'toString']) {
+    assert.match((await host.command('select_mode', { modeId })).error, /unavailable/)
+  }
+
+  const lateGuest = await connect()
+  const lateJoined = await lateGuest.command('join', { code: created.room.code })
+  assert.equal(lateJoined.room.selectedModeId, 'Hitman')
+  assert.equal(lateJoined.room.slots[0].ready, true)
+  assert.equal(lateJoined.room.slots[1].ready, true)
+  await host.waitFor(({ room }) => room?.slots[2]?.id === lateJoined.playerId)
+
+  guest.socket.close()
+  await host.waitFor(({ room }) => room?.slots[1]?.connected === false)
+  await host.command('select_mode', { modeId: 'last_man_standing' })
+  const replacement = await connect()
+  const restored = await replacement.command('resume', { token: joined.token })
+  assert.equal(restored.room.selectedModeId, 'last_man_standing')
+  assert.equal(restored.room.slots[1].ready, true)
+
+  assert.equal((await host.command('start')).error, undefined)
+  assert.match((await host.command('select_mode', { modeId: 'Hitman' })).error, /only available in the lobby/)
+  await host.command('leave')
+  assert.equal((await host.command('create')).room.selectedModeId, 'last_man_standing')
+})
+
 test('a reconnect restores membership until the disconnect grace expires', { timeout: 5000 }, async (context) => {
   const connect = await setup(context)
   const host = await connect()

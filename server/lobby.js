@@ -5,6 +5,7 @@ import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from 
 import { createParkSession, interactInPark, parkView, setParkInput, stepPark, stopParkInput } from './parkSession.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+const modeIds = Object.keys(JSON.parse(readFileSync(new URL('../data/game_modes.json', import.meta.url), 'utf8')))
 const mapDirectory = new URL('../data/maps/', import.meta.url)
 const mapIds = readdirSync(mapDirectory, { withFileTypes: true })
   .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
@@ -48,6 +49,7 @@ export function createLobbyServer({
     return {
       code: room.code,
       hostId: room.hostId,
+      selectedModeId: room.selectedModeId,
       selectedMapId: room.selectedMapId,
       phase: room.game ? 'park' : 'lobby',
       slots: room.slots.map((player) => player && ({
@@ -149,7 +151,13 @@ export function createLobbyServer({
         do {
           code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join('')
         } while (rooms.has(code))
-        const room = { code, hostId: null, selectedMapId: availableMapIds[0] ?? null, slots: Array(capacity).fill(null) }
+        const room = {
+          code,
+          hostId: null,
+          selectedModeId: 'last_man_standing',
+          selectedMapId: availableMapIds[0] ?? null,
+          slots: Array(capacity).fill(null),
+        }
         const hostPlayer = addHuman(socket, room, 0)
         room.hostId = hostPlayer.id
         rooms.set(code, room)
@@ -189,6 +197,11 @@ export function createLobbyServer({
         broadcast(room)
         broadcastPark(room)
         return result()
+      case 'select_mode':
+        if (!isHost) return reject('Only the host can select a mode.')
+        if (!modeIds.includes(message.modeId)) return reject('That mode is unavailable.')
+        room.selectedModeId = message.modeId
+        break
       case 'select_map':
         if (!isHost) return reject('Only the host can select a map.')
         if (!availableMapIds.includes(message.mapId)) return reject('That map is unavailable.')

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
 import { capacity, compareMaps, mapName, normalizePlayerName } from '../shared/lobbyRules.js'
+import gameModes from '../data/game_modes.json'
 
 const props = defineProps({
   room: { type: Object, required: true },
@@ -21,6 +22,7 @@ const maps = Object.entries(mapFiles).flatMap(([path, definition]) => {
   if (definition.id !== id || !definition.areas) return []
   return [{ id, name: mapName(id), thumbnail: thumbnails[`../assets/maps/${id}/thumbnail.png`] }]
 }).sort((first, second) => compareMaps(first.id, second.id))
+const modes = Object.entries(gameModes).map(([id, instructions]) => ({ id, name: mapName(id), instructions }))
 
 const heading = ref(null)
 const codeField = ref(null)
@@ -29,6 +31,7 @@ const roomError = ref('')
 const invalidPlayer = ref(null)
 const drafts = reactive(new Map())
 const isHost = computed(() => props.room.hostId === props.playerId)
+const selectedMode = computed(() => modes.find(({ id }) => id === props.room.selectedModeId))
 const selectedMap = computed(() => maps.find(({ id }) => id === props.room.selectedMapId))
 const playerCount = computed(() => props.room.slots.filter(Boolean).length)
 
@@ -100,6 +103,13 @@ function saveName(player, event) {
   if (name !== player.name) run(() => props.command('rename', { playerId: player.id, name }))
 }
 
+function selectMode(event) {
+  const field = event.currentTarget
+  const modeId = field.value
+  field.value = props.room.selectedModeId
+  run(() => props.command('select_mode', { modeId }))
+}
+
 function selectMap(event) {
   const field = event.currentTarget
   const mapId = field.value
@@ -116,6 +126,7 @@ function readState() {
   return {
     screen: 'room',
     inviteCode: props.room.code,
+    selectedMode: props.room.selectedModeId,
     selectedMap: props.room.selectedMapId,
     playerCount: playerCount.value,
     capacity,
@@ -149,6 +160,14 @@ defineExpose({ focusHeading, readState })
           </div>
 
           <div>
+            <label for="room-mode">Mode</label>
+            <select id="room-mode" class="room-field" :value="room.selectedModeId ?? ''"
+              :disabled="!isHost || reconnecting" @change="selectMode">
+              <option v-for="mode in modes" :key="mode.id" :value="mode.id">{{ mode.name }}</option>
+            </select>
+          </div>
+
+          <div>
             <label for="room-map">Map</label>
             <select id="room-map" class="room-field map-select" :value="room.selectedMapId ?? ''"
               :disabled="!isHost || reconnecting || !maps.length" @change="selectMap">
@@ -173,51 +192,60 @@ defineExpose({ focusHeading, readState })
           </div>
         </section>
 
-        <section class="room-pane" aria-labelledby="room-players">
-          <h2 id="room-players">Players</h2>
-          <ol class="room-slots" role="list">
-            <li v-for="(player, index) in room.slots" :key="index" class="player-slot">
-              <span class="slot-number" :aria-label="`Slot ${index + 1}`">{{ index + 1 }}</span>
-              <div v-if="player && canEdit(player)" :key="player.id" class="player-info">
-                <label class="player-label" :for="`player-name-${index}`">
-                  {{ player.isBot ? 'Bot name' : 'Your name' }}
-                </label>
-                <input
-                  :id="`player-name-${index}`"
-                  class="room-field player-name"
-                  :value="drafts.get(player.id) ?? player.name"
-                  maxlength="10"
-                  autocomplete="off"
-                  spellcheck="false"
-                  :disabled="reconnecting"
-                  @input="drafts.set(player.id, $event.target.value)"
-                  @blur="saveName(player, $event)"
-                  @keydown.enter.prevent="$event.currentTarget.blur()"
-                />
-              </div>
-              <span v-else-if="player" class="other-player">{{ player.name }}</span>
-              <span v-else class="empty-slot">Empty slot</span>
+        <div class="room-people">
+          <section class="room-pane" aria-labelledby="room-players">
+            <h2 id="room-players">Players</h2>
+            <ol class="room-slots" role="list">
+              <li v-for="(player, index) in room.slots" :key="index" class="player-slot">
+                <span class="slot-number" :aria-label="`Slot ${index + 1}`">{{ index + 1 }}</span>
+                <div v-if="player && canEdit(player)" :key="player.id" class="player-info">
+                  <label class="player-label" :for="`player-name-${index}`">
+                    {{ player.isBot ? 'Bot name' : 'Your name' }}
+                  </label>
+                  <input
+                    :id="`player-name-${index}`"
+                    class="room-field player-name"
+                    :value="drafts.get(player.id) ?? player.name"
+                    maxlength="10"
+                    autocomplete="off"
+                    spellcheck="false"
+                    :disabled="reconnecting"
+                    @input="drafts.set(player.id, $event.target.value)"
+                    @blur="saveName(player, $event)"
+                    @keydown.enter.prevent="$event.currentTarget.blur()"
+                  />
+                </div>
+                <span v-else-if="player" class="other-player">{{ player.name }}</span>
+                <span v-else class="empty-slot">Empty slot</span>
 
-              <button
-                v-if="player?.id === playerId"
-                class="glass-button room-button"
-                :class="{ 'start-button': player.ready }"
-                type="button"
-                :disabled="reconnecting"
-                @click="run(() => command('set_ready', { playerId, ready: !player.ready }))"
-              >
-                {{ player.ready ? 'Unready' : 'Ready' }}
-              </button>
-              <span v-else-if="player" class="ready-badge" :class="{ 'ready-badge-muted': !player.ready || !player.connected }">
-                {{ !player.connected ? 'Offline' : player.ready ? 'Ready' : 'Not ready' }}
-              </span>
-              <button v-else-if="isHost" class="glass-button room-button" type="button" :disabled="reconnecting" @click="addBot(index, $event)">
-                Add Bot
-              </button>
-              <p v-if="player && invalidPlayer === player.id" class="name-error" role="status">Use 1–10 letters, digits, or internal spaces.</p>
-            </li>
-          </ol>
-        </section>
+                <button
+                  v-if="player?.id === playerId"
+                  class="glass-button room-button slot-action"
+                  :class="{ 'start-button': player.ready }"
+                  type="button"
+                  :disabled="reconnecting"
+                  @click="run(() => command('set_ready', { playerId, ready: !player.ready }))"
+                >
+                  {{ player.ready ? 'Unready' : 'Ready' }}
+                </button>
+                <span v-else-if="player" class="ready-badge slot-action" :class="{ 'ready-badge-muted': !player.ready || !player.connected }">
+                  {{ !player.connected ? 'Offline' : player.ready ? 'Ready' : 'Not ready' }}
+                </span>
+                <button v-else-if="isHost" class="glass-button room-button slot-action" type="button" :disabled="reconnecting" @click="addBot(index, $event)">
+                  Add Bot
+                </button>
+                <p v-if="player && invalidPlayer === player.id" class="name-error" role="status">Use 1–10 letters, digits, or internal spaces.</p>
+              </li>
+            </ol>
+          </section>
+
+          <section class="room-pane game-description" aria-labelledby="room-description">
+            <h2 id="room-description">Game Description</h2>
+            <ul v-if="selectedMode" class="mode-instructions">
+              <li v-for="(instruction, index) in selectedMode.instructions" :key="index">{{ instruction }}</li>
+            </ul>
+          </section>
+        </div>
       </div>
     </div>
   </main>
@@ -231,7 +259,7 @@ defineExpose({ focusHeading, readState })
 }
 
 .room-content {
-  width: min(100%, 940px);
+  width: min(100%, 1280px);
   margin-inline: auto;
 }
 
@@ -258,8 +286,14 @@ defineExpose({ focusHeading, readState })
 
 .room-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   align-items: start;
+  gap: 16px;
+}
+
+.room-people {
+  display: grid;
+  min-width: 0;
   gap: 16px;
 }
 
@@ -349,6 +383,8 @@ defineExpose({ focusHeading, readState })
 
 .map-preview {
   overflow: hidden;
+  width: min(100%, 180px);
+  justify-self: center;
   margin: 0;
   border: 1px solid #ffd5ad58;
   border-radius: 15px;
@@ -392,6 +428,7 @@ h2 {
 
 .room-slots {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
   padding: 0;
@@ -400,11 +437,13 @@ h2 {
 
 .player-slot {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(64px, auto) auto;
   align-items: center;
   gap: 8px;
-  min-height: 66px;
-  padding: 8px;
+  min-width: 0;
+  min-height: 140px;
+  padding: 12px;
   border: 1px solid #ffdfba42;
   border-radius: 15px;
   background: linear-gradient(120deg, #ffdfba21, #30181063);
@@ -432,7 +471,11 @@ h2 {
 }
 
 .player-name {
-  max-width: 15rem;
+  max-width: 100%;
+}
+
+.slot-action {
+  grid-column: 1 / -1;
 }
 
 .empty-slot {
@@ -446,6 +489,10 @@ h2 {
 }
 
 .ready-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: 44px;
   padding: 5px 9px;
   border: 1px solid #badcb96b;
   border-radius: 1rem;
@@ -462,10 +509,19 @@ h2 {
 }
 
 .name-error {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
 }
 
-@media (min-width: 681px) and (max-height: 800px) {
+.mode-instructions {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 1.25rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 960px) and (max-height: 800px) {
   .room {
     padding-block: 24px;
   }
@@ -476,13 +532,25 @@ h2 {
   }
 
   .map-preview {
-    width: min(100%, 260px);
-    justify-self: center;
+    /* Reserve space for the heading, room fields, and Start/Leave controls. */
+    width: min(100%, clamp(96px, calc(100dvh - 540px), 180px));
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 1099px) {
+  .room-slots {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 959px) {
   .room-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 539px) {
+  .room-slots {
     grid-template-columns: minmax(0, 1fr);
   }
 }
