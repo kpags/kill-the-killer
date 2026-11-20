@@ -1,0 +1,233 @@
+    {
+    "name": "Park",
+    "id": "park",
+    "areas": {
+        "main": {
+            "walking_npcs": 3,
+            "interactions": {
+                "A": {
+                    "name": "Buy Ice Cream",
+                    "effect": "Opens a popup dialog showing 4 ice cream options; Mango, Cookies N Cream, Ube, and Chocolate. Players can select one and buy or exit.",
+                    "type": {
+                        "main": "store",
+                        "sub": "food"
+                    }
+                },
+                "B": {
+                    "name": "Bench B",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 2
+                },
+                "C": {
+                    "name": "Bench C",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                    "main": "sitting",
+                    "sub": "bench"
+                    },
+                    "seat_slots": 2
+                }
+            }
+        },
+        "food_stalls": {
+            "walking_npcs": 4,
+            "interactions": {
+                "A": {
+                    "name": "Bench A",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 2
+                },
+                "B": {
+                    "name": "Bench B",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 2
+                },
+                "C": {
+                    "name": "Cotton Candy",
+                    "effect": "Automatically consume a cotton candy when interacted.",
+                    "type": {
+                        "main": "store",
+                        "sub": "food"
+                    }
+                },
+                "D": {
+                    "name": "Takoyaki",
+                    "effect": "Automatically consume takoyaki when interacted.",
+                    "type": {
+                        "main": "store",
+                        "sub": "food"
+                    }
+                },
+                "E": {
+                    "name": "Drinks",
+                    "effect": "Automatically consume a drink when interacted.",
+                    "type": {
+                        "main": "store",
+                        "sub": "drinks"
+                    }
+                }
+            }
+        },
+        "fountain": {
+            "walking_npcs": 1,
+            "interactions": {
+                "A": {
+                    "name": "Bench A",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 2
+                },
+                "B": {
+                    "name": "Bench B",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 1
+                },
+                "C": {
+                    "name": "Bench C",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 1
+                },
+                "D": {
+                    "name": "Bench D",
+                    "effect": "Players/NPCs can sit and rest on the bench.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "bench"
+                    },
+                    "seat_slots": 2
+                }
+            }
+        },
+        "playground": {
+            "walking_npcs": 3,
+            "interactions": {
+                "A": {
+                    "name": "Basketball Shooting",
+                    "effect": "Opens a popup of a basketball ring and ball for a simple shooting game.",
+                    "type": {
+                        "main": "activity",
+                        "sub": "basketball"
+                    }
+                },
+                "B": {
+                    "name": "Firing Range",
+                    "effect": "Opens a popup of 3 target range and a gun for simple shooting activity.",
+                    "type": {
+                        "main": "activity",
+                        "sub": "shooting"
+                    }
+                },
+                "C": {
+                    "name": "Speaker C",
+                    "effect": "Players/NPCs can listen to music from the speaker and dance.",
+                    "type": {
+                        "main": "activity",
+                        "sub": "music"
+                    }
+                },
+                "D": {
+                    "name": "Speaker D",
+                    "effect": "Players/NPCs can listen to music from the speaker and dance.",
+                    "type": {
+                        "main": "activity",
+                        "sub": "music"
+                    }
+                }
+            },
+            "hiding_spots": {
+                "A": {
+                    "name": "Portalet A",
+                    "effect": "Players can hide inside the portalet.",
+                    "type": {
+                        "main": "strategy",
+                        "sub": "hiding"
+                    }
+                },
+                "B": {
+                    "name": "Portalet B",
+                    "effect": "Players can hide insisde the portalet.",
+                    "type": {
+                        "main": "strategy",
+                        "sub": "hiding"
+                    }
+                }
+            }
+        },
+        "fireworks": {
+            "walking_npcs": 1,
+            "interactions": {
+                "A": {
+                    "name": "Picnic Table A",
+                    "effect": "Players/NPCs can sit and rest on the table.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "picnic_table"
+                    }
+                },
+                "B": {
+                    "name": "Picnic Table B",
+                    "effect": "Players/NPCs can sit and rest on the table.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "picnic_table"
+                    },
+                    "seat_slots": 2
+                },
+                "C": {
+                    "name": "Picnic Table C",
+                    "effect": "Players/NPCs can sit and rest on the table.",
+                    "type": {
+                        "main": "sitting",
+                        "sub": "picnic_table"
+                    },
+                    "seat_slots": 2
+                }
+            }
+        },
+        "carpark": {
+            "walking_npcs": 0,
+            "model_scale": 0.8,
+            "hiding_spots": {
+                "A": {
+                    "name": "Car A",
+                    "effect": "Players can hide inside the car.",
+                    "type": {
+                        "main": "strategy",
+                        "sub": "hiding"
+                    }
+                },
+                "B": {
+                    "name": "Car B",
+                    "effect": "Players can hide insisde the car.",
+                    "type": {
+                        "main": "strategy",
+                        "sub": "hiding"
+                    }
+                }
+            }
+        }
+    }
+}

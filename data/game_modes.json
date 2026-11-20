@@ -1,0 +1,15 @@
+{
+    "last_man_standing": [
+        "Kill each other until only one player remains.",
+        "Utilize blending in with the crowd and hiding to survive or kill your targets.",
+        "Killing an NPC will have your location exposed to all players as penalty.",
+        "The last player standing wins the game."
+    ],
+    "Hitman": [
+        "Kill your targets to gain kill score.",
+        "Utilize blending in with the crowd and hiding to survive or kill your targets.",
+        "Killing an NPC will have your location exposed to all players as penalty.",
+        "The stealthier kill approach, the higher kill score you gain.",
+        "Player with the highest score wins the game."
+    ]
+}
