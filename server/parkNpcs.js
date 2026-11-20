@@ -4,11 +4,12 @@ import { claimSeat } from './parkSeats.js'
 
 const phonePoses = ['phone-one', 'phone-two', 'phone-three']
 const directions = [-1, 1]
-// In left-to-right order, every talking group has an inward-facing pair.
+const maxCrowdSize = 3
+// In left-to-right order, the outer talkers always face inward.
 const crowdFacings = {
   1: [[-1], [1]],
   2: [[1, -1]],
-  3: [[1, -1, -1], [1, -1, 1], [1, 1, -1], [-1, 1, -1]],
+  3: [[1, -1, -1], [1, 1, -1]],
 }
 
 function pick(list, random) {
@@ -23,7 +24,7 @@ export function spawnParkNpcs(game) {
   const { random } = game
   for (const [areaIndex, area] of areas.entries()) {
     for (const [x, y, width, height] of area.crowds) {
-      const count = 1 + Math.floor(random() * 3)
+      const count = 1 + Math.floor(random() * maxCrowdSize)
       const palette = [...colors]
       const pose = count === 1 ? pick(phonePoses, random) : 'talk'
       const facings = pick(crowdFacings[count], random)
@@ -71,7 +72,7 @@ function spawnWalker(game, slot, direction) {
   }
   slot.actor = actor
   slot.direction = direction
-  slot.visit = random() < 0.1 ? chooseVisit(game, actor, area, direction) : null
+  slot.visit = random() < 0.3 ? chooseVisit(game, actor, area, direction) : null
   slot.resumeAt = null
   slot.respawnAt = null
   game.npcs.set(actor.id, actor)
@@ -119,11 +120,11 @@ function startActivity(game, slot, now) {
     Object.assign(actor, seat)
     actor.mode = 'sit'
     actor.pose = 'sit'
-    slot.resumeAt = now + randomTime(game.random, 30_000, 60_000)
+    slot.resumeAt = now + randomTime(game.random, 10_000, 90_000)
   } else {
     actor.mode = 'dance'
     actor.pose = 'dance'
-    slot.resumeAt = now + randomTime(game.random, 10_000, 20_000)
+    slot.resumeAt = now + randomTime(game.random, 5_000, 60_000)
   }
   actor.spotId = spot.id
 }

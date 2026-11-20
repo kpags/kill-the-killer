@@ -101,7 +101,7 @@ Each guide matches its own template's dimensions. The areas use different image 
 | Blue filled box | An NPC spawn spot for a small group or one NPC. |
 | Wavy grey line | An object or foreground area that becomes transparent when any part of a player or NPC model passes through it, keeping the model visible. |
 
-- **NPC spawn spots.** Each blue marker spawns one to three NPCs, chosen randomly. A lone NPC faces left or right at random and loops one randomly selected `phone_surfing` animation. Groups stand close together in distinct colors and loop all three talking clips. Two talkers always face each other. Three talkers use a random arrangement with at least one face-to-face pair. Both animations play at 80% of their source speed.
+- **NPC spawn spots.** Each blue marker spawns one to three NPCs, chosen randomly. A lone NPC faces left or right at random and loops one randomly selected `phone_surfing` animation. Groups stand close together in distinct colors and loop all three talking clips. Two talkers always face each other. In groups of three, the outer two face inward and the middle talker faces left or right at random. Both animations play at 80% of their source speed.
 - **Hiding limit.** Players can stay in a hiding spot for up to 10 seconds. When the timer expires, the player automatically exits the spot. This prevents camping.
 - **Hiding preview.** Only the hiding player sees their translucent model inside the spot. The preview stands when the spot is taller than the area's standing model. It sits when the spot is the same height or shorter.
 
@@ -131,15 +131,16 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The bottom of the seated model's hips rests on the orange guide box's bottom edge, with the legs extending naturally below. The map's `seat_slots` value sets the combined capacity for players and NPCs. Each occupant takes the nearest available slot. A sitting interaction with no `seat_slots` value defaults to one slot.
 - Nearby interaction prompts appear above the local player's head with **E** on keyboard layouts or **Interact** on touch layouts. While hidden, the exit prompt and countdown appear above the player's hiding position.
 - Park artwork uses the supplied animated templates. Stickmen have transparent backgrounds and soft ground shadows. The default standing height is 83 map pixels. An area's `model_scale` multiplies that height and scales other poses with it. Carpark uses `0.8`, for a standing height of about 66 map pixels.
+- Each player sees a small rainbow shadow under their own stickman's feet, including their translucent hiding preview.
 - The pause menu blocks local movement and interaction while the multiplayer session continues. **Resume** returns to gameplay, **Settings** opens the audio controls, and **Exit** leaves the room. When the host exits, the room closes for everyone.
 - The home screen and pause menu share **SFX** and **Music** sliders. Both default to 100%, and the browser saves the player's choices.
 
 ### Park NPCs
 
-- Crowds spawn at the blue markers when the session starts. The server shares NPC positions and activities with everyone in the same area.
+- Each blue marker holds a group of up to three crowd NPCs when the session starts. The server shares NPC positions and activities with everyone in the same area.
 - Each area's `walking_npcs` value sets how many walkers can be active at once, including any walkers who stop to sit or dance. An omitted value or `0` means that only the blue-marker crowds spawn.
 - Walkers enter from the left or right side of the playable area at a random depth. They disappear at the opposite edge. After 5–10 seconds, the replacement enters from the side where the previous walker exited.
-- Each new walker has a 10% chance to head for an available seat or music interaction along its route. A walker that finds a free seat on arrival sits for 30–60 seconds. A walker that reaches a music interaction dances for 10–20 seconds. Both continue toward their original edge afterward. Players and NPCs share the same seat limits.
+- Each new walker has a 30% chance to head for an available seat or music interaction along its route. A walker that finds a free seat on arrival sits for 10–90 seconds. A walker that reaches a music interaction dances for 5–60 seconds. Both continue toward their exit edge afterward. Players and NPCs share the same seat limits.
 
 ## Change log
 
@@ -163,3 +164,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - 2026-11-20 — Added synchronized Park crowds, configurable walkers, and timed NPC bench and music interactions.
 - 2026-11-20 — Moved walker spawns to the sides of each area, randomized crowd facing, and slowed the talking and phone animations by 20%.
 - 2026-11-20 — Made pairs of talkers face each other and required a face-to-face pair in every group of three.
+- 2026-11-20 — Raised the walker interaction chance to 30%, set new sitting and dancing times, and verified the three-NPC cap per blue marker.
+- 2026-11-20 — Made both outer talkers face inward in groups of three so everyone faces someone.
+- 2026-11-20 — Added a private rainbow outline that follows the local player's model.
+- 2026-11-20 — Moved the private rainbow marker from the model outline to a soft shadow at its feet.

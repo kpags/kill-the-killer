@@ -5,6 +5,7 @@ const atlasUrls = import.meta.glob('../assets/gameplay/*.webp', { eager: true, i
 const atlasScale = standingHeight / 120
 const crowdPlaybackRate = 0.8
 const footRow = 132
+const playerShadowColors = ['#ff7096', '#ffd568', '#8cefaf', '#74dfff', '#b69bff']
 const narrowSceneWidth = areas[0].width
 const narrowViewport = window.matchMedia('(max-width: 640px)')
 
@@ -20,6 +21,28 @@ function frameAt(atlas, ms) {
 function paintFrame(ctx, atlas, index, x = 0, y = 0) {
   const { width, height, columns, image } = atlas
   ctx.drawImage(image, index % columns * width, Math.floor(index / columns) * height, width, height, x, y, width, height)
+}
+
+function createPlayerShadow() {
+  const shadow = document.createElement('canvas')
+  const size = 64
+  const center = size / 2
+  shadow.width = size
+  shadow.height = size
+  const ctx = shadow.getContext('2d')
+  const gradient = ctx.createLinearGradient(0, 0, size, 0)
+  playerShadowColors.forEach((color, index) => gradient.addColorStop(index / (playerShadowColors.length - 1), color))
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+
+  const fade = ctx.createRadialGradient(center, center, 0, center, center, center)
+  fade.addColorStop(0, '#000b')
+  fade.addColorStop(0.45, '#0009')
+  fade.addColorStop(1, '#0000')
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.fillStyle = fade
+  ctx.fillRect(0, 0, size, size)
+  return shadow
 }
 
 function polygon(points) {
@@ -59,6 +82,7 @@ export async function loadParkArt() {
 
 export function createParkRenderer(canvas, art) {
   const ctx = canvas.getContext('2d')
+  const playerShadow = createPlayerShadow()
   const sampleCanvas = document.createElement('canvas')
   sampleCanvas.width = 160
   sampleCanvas.height = 136
@@ -66,6 +90,11 @@ export function createParkRenderer(canvas, art) {
   const foregroundPaths = areas.map((area) => area.foreground.map(polygon))
   let visible = new Map()
   let lastArea = null
+
+  function paintPlayerShadow(x, y, radius) {
+    const depth = radius * 0.3
+    ctx.drawImage(playerShadow, x - radius, y - depth, radius * 2, depth * 2)
+  }
 
   function silhouette(atlas, index) {
     if (!atlas.silhouettes.has(index)) {
@@ -176,6 +205,7 @@ export function createParkRenderer(canvas, art) {
     paintFrame(ctx, scene, sceneFrame)
 
     const shadowRadius = 19 * area.modelScale
+    const playerShadowRadius = 17 * area.modelScale
     for (const actor of actors) {
       const shadow = ctx.createRadialGradient(actor.x, 0, area.modelScale, actor.x, 0, shadowRadius)
       shadow.addColorStop(0, '#030611b8')
@@ -187,6 +217,9 @@ export function createParkRenderer(canvas, art) {
       ctx.fillRect(actor.x - shadowRadius, -shadowRadius, shadowRadius * 2, shadowRadius * 2)
       ctx.restore()
 
+      if (actor.id === playerId) {
+        paintPlayerShadow(actor.x, actor.y + 3 * area.modelScale, playerShadowRadius)
+      }
       ctx.save()
       ctx.translate(actor.x, actor.y)
       ctx.scale(actor.facing * modelScale, modelScale)
@@ -214,6 +247,8 @@ export function createParkRenderer(canvas, art) {
     })
     if (preview) {
       ctx.save()
+      ctx.globalAlpha = 0.6
+      paintPlayerShadow(preview.x, preview.y + area.modelScale, playerShadowRadius * preview.scale / modelScale)
       ctx.globalAlpha = 0.45
       ctx.translate(preview.x, preview.y)
       ctx.scale(preview.facing * preview.scale, preview.scale)
