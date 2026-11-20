@@ -5,6 +5,9 @@ import { claimSeat } from './parkSeats.js'
 
 const sprintSpeed = 121
 const staminaLimit = 100
+const startProfile = 33
+const profileRange = 36
+const hideTransitionMs = 1000
 const hideLimit = 10_000
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const mainSpawns = [[130, 290], [215, 311], [338, 290], [70, 311], [277, 290], [411, 311]]
@@ -16,6 +19,7 @@ export function createParkSession(players, random = Math.random) {
     const [x, y] = mainSpawns[index]
     return [player.id, {
       id: player.id,
+      name: player.name,
       color,
       isBot: player.isBot,
       area: 0,
@@ -28,12 +32,21 @@ export function createParkSession(players, random = Math.random) {
       seatSlot: null,
       hideUntil: 0,
       stamina: staminaLimit,
+      profile: startProfile,
+      profileHideMs: 0,
       recoveryMs: 0,
       exhausted: false,
       input: stopped,
     }]
   }))
-  const game = { players: roster, npcs: new Map(), walkers: [], random }
+  const targetOrder = [...roster.keys()]
+  for (let index = targetOrder.length - 1; index > 0; index--) {
+    const other = randomInt(index + 1)
+    const current = targetOrder[index]
+    targetOrder[index] = targetOrder[other]
+    targetOrder[other] = current
+  }
+  const game = { players: roster, targetOrder, npcs: new Map(), walkers: [], random }
   spawnParkNpcs(game)
   return game
 }
@@ -49,8 +62,37 @@ export function stopParkInput(actor) {
   if (actor) actor.input = stopped
 }
 
+function adjustProfile(actor, amount) {
+  actor.profile = Math.max(0, Math.min(100, actor.profile + amount))
+}
+
+function profileRate(game, actor, previous) {
+  if (actor.mode === 'sit') return 8
+  if (actor.mode === 'dance') return 3
+  if (actor.mode !== 'free') return 0
+
+  const walking = actor.pose === 'walk' || actor.pose === 'sprint'
+  const range = profileRange * areas[actor.area].modelScale
+  let nearestBefore = Infinity
+  let nearestAfter = Infinity
+  for (const npc of game.npcs.values()) {
+    if (npc.pose !== 'walk' && npc.pose !== 'talk') continue
+    if (npc.area === actor.area) {
+      const distance = Math.hypot(npc.x - actor.x, npc.y - actor.y)
+      if (distance <= range && npc.pose === (walking ? 'walk' : 'talk')) return walking ? 2 : 5
+      nearestAfter = Math.min(nearestAfter, distance)
+    }
+    if (walking && npc.area === previous.area) {
+      nearestBefore = Math.min(nearestBefore, Math.hypot(npc.x - previous.x, npc.y - previous.y))
+    }
+  }
+  if (!walking) return 1
+  return nearestAfter > nearestBefore ? -1 : 0
+}
+
 function endInteraction(actor) {
   if (actor.mode === 'sit') Object.assign(actor, constrain(areas[actor.area], actor.x, actor.y))
+  if (actor.mode === 'hide') actor.profileHideMs += hideTransitionMs
   actor.mode = 'free'
   actor.pose = 'idle'
   actor.spotId = null
@@ -74,6 +116,7 @@ export function interactInPark(game, playerId, now) {
   actor.spotId = spot.id
   stopParkInput(actor)
   if (spot.hiding) {
+    actor.profileHideMs += hideTransitionMs
     actor.mode = 'hide'
     actor.pose = 'idle'
     actor.hideUntil = now + hideLimit
@@ -121,6 +164,7 @@ function move(actor, dx, dy) {
 export function stepPark(game, elapsedMs, now) {
   for (const actor of game.players.values()) {
     if (actor.isBot) continue
+    const previous = { area: actor.area, x: actor.x, y: actor.y }
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
     const input = actor.input.until >= now ? actor.input : stopped
     const moving = Boolean(input.x || input.y) && actor.mode === 'free'
@@ -157,17 +201,27 @@ export function stepPark(game, elapsedMs, now) {
         actor.recoveryMs -= 3000
       }
     }
+    const hidingMs = Math.min(elapsedMs, actor.profileHideMs)
+    actor.profileHideMs -= hidingMs
+    const sprintMs = Math.min(spentMs, elapsedMs - hidingMs)
+    const ordinaryMs = elapsedMs - hidingMs - sprintMs
+    const profileChange = (profileRate(game, actor, previous) * ordinaryMs - 8 * sprintMs - 5 * hidingMs) / 1000
+    adjustProfile(actor, profileChange)
   }
   stepParkNpcs(game, elapsedMs, now)
 }
 
 export function parkView(game, playerId, now) {
   const actor = game.players.get(playerId)
+  const order = game.targetOrder.filter((id) => game.players.has(id))
+  const target = order.length > 1 ? game.players.get(order[(order.indexOf(playerId) + 1) % order.length]) : null
   const actors = [...game.players.values(), ...game.npcs.values()]
     .filter((other) => other.area === actor.area && (other === actor || other.mode !== 'hide'))
   return {
     area: actor.area,
     stamina: Math.round(actor.stamina * 10) / 10,
+    profile: Math.round(actor.profile * 10) / 10,
+    target: target ? { name: target.name, color: target.color } : null,
     mode: actor.mode,
     spotId: actor.spotId ?? nearbySpot(actor)?.id ?? null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),

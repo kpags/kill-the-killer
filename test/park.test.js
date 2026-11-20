@@ -14,6 +14,82 @@ function createEmptyPark(players) {
   return game
 }
 
+test('Park shares only the assigned target name and color, even when the target moves or hides', () => {
+  const members = roster(3).map((member, index) => ({ ...member, name: `Player ${index + 1}` }))
+  const game = createEmptyPark(members)
+  const targets = new Set()
+  for (const player of game.players.values()) {
+    const { profile, target } = parkView(game, player.id, 0)
+    assert.equal(profile, 33)
+    assert.notEqual(target.name, player.name)
+    assert.deepEqual(Object.keys(target).sort(), ['color', 'name'])
+    targets.add(target.name)
+  }
+  assert.equal(targets.size, members.length)
+
+  const player = game.players.get('0')
+  const assigned = parkView(game, player.id, 0).target
+  const target = [...game.players.values()].find(({ name }) => name === assigned.name)
+  target.area = 4
+  target.mode = 'hide'
+  const view = parkView(game, player.id, 50)
+  assert.deepEqual(view.target, assigned)
+  assert.ok(view.actors.every(({ id }) => id !== target.id))
+
+  game.players.delete(target.id)
+  assert.notEqual(parkView(game, player.id, 50).target.name, assigned.name)
+  for (const id of game.players.keys()) {
+    if (id !== player.id) game.players.delete(id)
+  }
+  assert.equal(parkView(game, player.id, 50).target, null)
+})
+
+test('the profile meter follows Park behavior rates and remains between 0 and 100', () => {
+  const game = createEmptyPark(roster(1))
+  const player = game.players.get('0')
+  let now = 0
+  const tick = (ms = 1000, x = 0, sprint = false) => {
+    now += ms
+    setParkInput(player, { x, y: 0, sprint }, now)
+    stepPark(game, ms, now)
+    return parkView(game, player.id, now).profile
+  }
+
+  assert.equal(tick(), 34)
+  game.npcs.set('crowd', { id: 'crowd', pose: 'talk', area: 0, x: 125, y: 290 })
+  assert.equal(tick(), 39)
+  assert.equal(tick(1000, 1), 38)
+  game.npcs.clear()
+  game.npcs.set('walker', { id: 'walker', pose: 'walk', area: 0, x: 274, y: 290 })
+  assert.equal(tick(1000, 1), 40)
+  game.npcs.clear()
+  assert.equal(tick(1000, -1), 40)
+  assert.equal(tick(1000, -1, true), 32)
+
+  Object.assign(player, { x: 130, y: 290 })
+  interactInPark(game, player.id, now)
+  assert.equal(tick(), 40)
+  interactInPark(game, player.id, now)
+  Object.assign(player, { area: 3, x: 214, y: 275 })
+  interactInPark(game, player.id, now)
+  assert.equal(tick(), 43)
+  interactInPark(game, player.id, now)
+  Object.assign(player, { x: 435, y: 273 })
+  interactInPark(game, player.id, now)
+  assert.equal(tick(500), 40.5)
+  assert.equal(tick(500), 38)
+  assert.equal(tick(), 38)
+  interactInPark(game, player.id, now)
+  assert.equal(tick(), 33)
+
+  Object.assign(player, { area: 0, x: 130, y: 290 })
+  interactInPark(game, player.id, now)
+  assert.equal(tick(10000), 100)
+  interactInPark(game, player.id, now)
+  player.profile = 2
+  assert.equal(tick(500, 1, true), 0)
+})
+
 test('the six roster seats get distinct colors and valid Main spawns', () => {
   const game = createEmptyPark(roster(6))
   const actors = [...game.players.values()]

@@ -20,6 +20,8 @@ const directions = [
   { key: 'KeyS', label: 'Move down', arrow: '↓' },
   { key: 'KeyD', label: 'Move right', arrow: '→' },
 ]
+const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
+const profileThresholds = [0, 33, 66, 100]
 const pressed = new Set()
 const pointers = new Map()
 const movement = new Set([...directions.map(({ key }) => key), 'ShiftLeft'])
@@ -36,6 +38,13 @@ const exiting = ref(false)
 const focusPanel = ref(null)
 const area = computed(() => areas[props.state?.area])
 const stamina = computed(() => props.state?.stamina ?? 100)
+const profile = computed(() => props.state?.profile ?? 33)
+const profileFills = computed(() => profileThresholds.slice(1).map((end, index) => {
+  const start = profileThresholds[index]
+  return Math.min(1, Math.max(0, (profile.value - start) / (end - start)))
+}))
+const target = computed(() => props.state?.target ?? null)
+const targetSprite = computed(() => target.value && idleSprites[`../assets/gameplay/${target.value.color}-idle.webp`])
 const spot = computed(() => area.value?.spots.find(({ id }) => id === props.state?.spotId))
 const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
@@ -249,6 +258,8 @@ function readState() {
     area: area.value?.id ?? null,
     artReady: artReady.value,
     stamina: stamina.value,
+    profile: profile.value,
+    target: target.value,
     modelScale: area.value?.modelScale,
     pause: pauseScreen.value,
     mode: props.state?.mode,
@@ -266,6 +277,15 @@ defineExpose({ readState })
 <template>
   <main class="park-game">
     <header class="park-hud">
+      <div class="park-profile">
+        <div class="park-profile-track" role="meter" aria-labelledby="park-profile-label"
+          aria-valuemin="0" aria-valuemax="100" :aria-valuenow="profile" :aria-valuetext="`${profile}%`">
+          <span v-for="(fill, index) in profileFills" :key="index" class="park-profile-segment">
+            <span class="park-profile-fill" :style="{ transform: `scaleX(${fill})` }"></span>
+          </span>
+        </div>
+        <span id="park-profile-label">Profile Meter</span>
+      </div>
       <h1>{{ area?.name ?? 'Park' }}</h1>
       <div class="park-stamina">
         <span id="park-stamina-label">Stamina</span>
@@ -274,7 +294,16 @@ defineExpose({ readState })
           <span class="park-stamina-fill" :style="{ transform: `scaleX(${stamina / 100})` }"></span>
         </div>
       </div>
-      <button type="button" class="glass-button park-button" aria-keyshortcuts="P" @click="openPause">Pause</button>
+      <button type="button" class="glass-button park-button park-hud-pause" aria-keyshortcuts="P" @click="openPause">Pause</button>
+      <section class="park-target" aria-label="Target">
+        <div class="park-target-text">
+          <span v-if="target">Kill</span>
+          <strong>{{ target?.name ?? 'No target' }}</strong>
+        </div>
+        <div class="park-target-frame" aria-hidden="true">
+          <img v-if="targetSprite" :src="targetSprite" alt="" />
+        </div>
+      </section>
     </header>
 
     <div class="park-stage">
@@ -349,7 +378,8 @@ defineExpose({ readState })
 
 .park-hud {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "profile area stamina pause target";
+  grid-template-columns: minmax(100px, 1fr) auto minmax(70px, 170px) auto minmax(120px, 1fr);
   align-items: center;
   gap: clamp(8px, 3vw, 28px);
   padding: 10px clamp(10px, 3vw, 34px);
@@ -358,15 +388,18 @@ defineExpose({ readState })
 }
 
 .park-hud h1 {
+  grid-area: area;
   margin: 0;
   font-size: clamp(1.1rem, 3vw, 1.65rem);
   line-height: 1.1;
 }
 
 .park-stamina {
+  grid-area: stamina;
   display: grid;
   gap: 1px;
-  width: clamp(70px, 19vw, 170px);
+  width: 100%;
+  max-width: 170px;
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -390,8 +423,114 @@ defineExpose({ readState })
   transition: transform 200ms linear;
 }
 
+.park-hud-pause {
+  grid-area: pause;
+  justify-self: end;
+}
+
+.park-profile {
+  grid-area: profile;
+  display: grid;
+  gap: 4px;
+  width: 100px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.park-profile-track {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  width: 100px;
+  height: 15px;
+}
+
+.park-profile-segment {
+  overflow: hidden;
+  border: 1px solid #7399c17a;
+  border-radius: 3px;
+  background: #11192b;
+}
+
+.park-profile-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #2158bd;
+  transform-origin: left center;
+  transition: transform 200ms linear;
+}
+
+.park-profile-segment:nth-child(2) .park-profile-fill { background: #3989ee; }
+.park-profile-segment:nth-child(3) .park-profile-fill { background: #88d7ff; }
+
+.park-target {
+  grid-area: target;
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+  min-width: 0;
+  text-align: right;
+}
+
+.park-target-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.park-target-text span {
+  color: #ffb4b1;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.park-target-text strong {
+  font-size: 0.875rem;
+  line-height: 1.1;
+}
+
+.park-target-frame {
+  position: relative;
+  flex: none;
+  width: 48px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid #ffdfba65;
+  border-radius: 8px;
+  background: #11192b;
+}
+
+.park-target-frame img {
+  position: absolute;
+  /* Crop the 48px square at (56, 8) from the 160px idle sprite. */
+  width: calc(100% * 160 / 48);
+  max-width: none;
+  top: calc(-100% * 8 / 48);
+  left: calc(-100% * 56 / 48);
+}
+
+@media (max-width: 640px) {
+  .park-hud {
+    grid-template-areas: "profile target target" "area stamina pause";
+    grid-template-columns: 100px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-block: 8px;
+  }
+
+  .park-hud h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .park-target-frame { width: 40px; }
+  .park-target-text strong { font-size: 0.75rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .park-stamina-fill {
+  .park-stamina-fill,
+  .park-profile-fill {
     transition: none;
   }
 }

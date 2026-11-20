@@ -36,6 +36,8 @@ The meter has three bars of 33 percentage points each. The bars fill at 33%, 66%
 
 Each player starts the match at 33% (one full bar) in modes that use the meter. The meter resets to 0% whenever a new target is assigned after the player kills their previous target or is stunned.
 
+The HUD shows a 100 × 15 px meter at the upper left, with dark blue, blue, and light blue segments spanning 0–33%, 34–66%, and 67–100%. Segment fills animate as the value changes. The upper-right **Kill** card shows the assigned target's name and a crop of their stickman face.
+
 | Player behavior | Change per second (percentage points) |
 | --- | ---: |
 | Standing still | +1 |
@@ -132,6 +134,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Nearby interaction prompts appear above the local player's head with **E** on keyboard layouts or **Interact** on touch layouts. While hidden, the exit prompt and countdown appear above the player's hiding position.
 - Park artwork uses the supplied animated templates. Stickmen have transparent backgrounds and soft ground shadows. The default standing height is 83 map pixels. An area's `model_scale` multiplies that height and scales other poses with it. Carpark uses `0.8`, for a standing height of about 66 map pixels.
 - Each player sees a small rainbow shadow under their own stickman's feet, including their translucent hiding preview.
+- Park starts the Profile Meter at 33% and applies the behavior rates for movement, NPC proximity, seating, dancing, and hiding transitions. The proximity radius is 36 map pixels at default model scale. Entering and leaving hiding each apply the −5 rate for one second. The target card uses a shuffled, one-to-one assignment from the active room roster. A solo session without bots has no target.
 - The pause menu blocks local movement and interaction while the multiplayer session continues. **Resume** returns to gameplay, **Settings** opens the audio controls, and **Exit** leaves the room. When the host exits, the room closes for everyone.
 - The home screen and pause menu share **SFX** and **Music** sliders. Both default to 100%, and the browser saves the player's choices.
 
@@ -168,3 +171,4 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - 2026-11-20 — Made both outer talkers face inward in groups of three so everyone faces someone.
 - 2026-11-20 — Added a private rainbow outline that follows the local player's model.
 - 2026-11-20 — Moved the private rainbow marker from the model outline to a soft shadow at its feet.
+- 2026-11-20 — Added the animated Profile Meter and private target portraits to the Park HUD.
