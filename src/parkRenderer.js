@@ -1,5 +1,7 @@
 import metadata from '../assets/gameplay/atlases.json'
 import { areas, designHeight, designWidth, hidingPose, standingHeight } from '../shared/park.js'
+import { combatPlaybackRate, deathOpacity, oneShotPoses } from '../shared/combat.js'
+import { frameAt, hoverOpacity, pickModel } from './parkPicking.js'
 
 const atlasUrls = import.meta.glob('../assets/gameplay/*.webp', { eager: true, import: 'default', query: '?url' })
 const atlasScale = standingHeight / 120
@@ -8,15 +10,7 @@ const footRow = 132
 const playerShadowColors = ['#ff7096', '#ffd568', '#8cefaf', '#74dfff', '#b69bff']
 const narrowSceneWidth = areas[0].width
 const narrowViewport = window.matchMedia('(max-width: 640px)')
-
-function frameAt(atlas, ms) {
-  let phase = ms % atlas.duration
-  for (let frame = 0; frame < atlas.durations.length; frame++) {
-    if (phase < atlas.durations[frame]) return frame
-    phase -= atlas.durations[frame]
-  }
-  return 0
-}
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 
 function paintFrame(ctx, atlas, index, x = 0, y = 0) {
   const { width, height, columns, image } = atlas
@@ -65,6 +59,28 @@ function contains(points, x, y) {
   return inside
 }
 
+function matchPurpleIdle(image) {
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(image, 0, 0)
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const { data } = frame
+  for (let i = 0; i < data.length; i += 4) {
+    const red = data[i]
+    const green = data[i + 1]
+    const blue = data[i + 2]
+    // Match the walking fill (#9800fd) while retaining the outline and the alpha mask.
+    const tint = Math.min(1, Math.max(0, Math.min(red, blue) - green) / 167)
+    data[i] = red - 20 * tint
+    data[i + 1] = green - 5 * tint
+    data[i + 2] = blue + 17 * tint
+  }
+  ctx.putImageData(frame, 0, 0)
+  return canvas
+}
+
 export async function loadParkArt() {
   const entries = await Promise.all(Object.entries(metadata).map(async ([name, atlas]) => {
     const image = new Image()
@@ -72,7 +88,7 @@ export async function loadParkArt() {
     await image.decode()
     return [name, {
       ...atlas,
-      image,
+      image: name === 'purple-idle' ? matchPurpleIdle(image) : image,
       duration: atlas.durations.reduce((sum, ms) => sum + ms, 0),
       silhouettes: new Map(),
     }]
@@ -90,6 +106,11 @@ export function createParkRenderer(canvas, art) {
   const foregroundPaths = areas.map((area) => area.foreground.map(polygon))
   let visible = new Map()
   let lastArea = null
+  let snapshot = null
+  let snapshotReceivedAt = 0
+  let hoveredId = null
+  let hoverStartedAt = 0
+  const tints = new Map()
 
   function paintPlayerShadow(x, y, radius) {
     const depth = radius * 0.3
@@ -123,6 +144,7 @@ export function createParkRenderer(canvas, art) {
       let seatRow = footRow
       while (seatRow > 0 && data[((seatRow - 1) * 160 + 80) * 4 + 3] < 128) seatRow--
       atlas.silhouettes.set(index, {
+        data,
         points,
         head: { x: points.length ? (left + right) / 2 : 0, y: top },
         width: halfWidth * 2 + 6,
@@ -131,6 +153,21 @@ export function createParkRenderer(canvas, art) {
       })
     }
     return atlas.silhouettes.get(index)
+  }
+
+  function alphaAt(actor, x, y) {
+    return silhouette(actor.atlas, actor.frame).data[(y * 160 + x) * 4 + 3]
+  }
+
+  function withinPose(actor, x, y) {
+    const { atlas, pose, frame } = actor
+    const currentSeatOffset = pose === 'sit' ? silhouette(atlas, frame).seatOffset : 0
+    return atlas.durations.some((_, index) => {
+      if (index === frame) return false
+      const shape = silhouette(atlas, index)
+      const frameY = pose === 'sit' ? y + currentSeatOffset - shape.seatOffset : y
+      return frameY >= 0 && frameY < 136 && shape.data[(frameY * 160 + x) * 4 + 3] > 100
+    })
   }
 
   function hidingPreview(area, actor, spotId, time, modelScale) {
@@ -152,16 +189,22 @@ export function createParkRenderer(canvas, art) {
     }
   }
 
-  return function draw(state, time, playerId, showPrompt) {
+  return function draw(state, time, playerId, showPrompt, pointer = null, pickAttack = false) {
     const area = areas[state.area]
     const modelScale = atlasScale * area.modelScale
     const ratio = Math.min(2, window.devicePixelRatio || 1)
     const width = Math.round(canvas.clientWidth * ratio)
     const height = Math.round(canvas.clientHeight * ratio)
-    if (width < 1 || height < 1) return { faded: 0, head: null }
+    if (width < 1 || height < 1) return { faded: 0, head: null, hoveredId: null, attackId: null }
     if (canvas.width !== width) canvas.width = width
     if (canvas.height !== height) canvas.height = height
-    const scale = Math.min(width / (narrowViewport.matches ? narrowSceneWidth : designWidth), height / designHeight)
+    const viewWidth = state.spectating ? area.width : narrowViewport.matches ? narrowSceneWidth : designWidth
+    const scale = Math.min(width / viewWidth, height / designHeight)
+    if (snapshot !== state) {
+      snapshot = state
+      snapshotReceivedAt = time
+    }
+    const serverNow = (state.serverTime ?? 0) + Math.max(0, time - snapshotReceivedAt)
 
     ctx.resetTransform()
     ctx.fillStyle = '#101728'
@@ -169,23 +212,31 @@ export function createParkRenderer(canvas, art) {
 
     if (lastArea !== state.area) {
       visible.clear()
+      hoveredId = null
       lastArea = state.area
     }
-    const actors = state.actors.filter((actor) => !actor.hidden).map((actor) => {
+    const actors = state.actors.filter((actor) => !actor.hidden && deathOpacity(actor, serverNow) > 0).map((actor) => {
       const previous = visible.get(actor.id)
       const poseTime = previous?.pose === actor.pose ? previous.poseTime : time - (actor.animationOffset ?? 0)
       const isSeated = actor.pose === 'sit'
       const atlas = art[`${actor.color}-${actor.pose}`]
       const playbackRate = actor.pose === 'talk' || actor.pose.startsWith('phone-') ? crowdPlaybackRate : 1
-      const frame = frameAt(atlas, (time - poseTime) * playbackRate)
+      let age = (time - poseTime) * playbackRate
+      if (actor.combat) age = (serverNow - actor.combat.startedAt) * combatPlaybackRate(actor.pose)
+      else if (actor.actionStartedAt != null) age = serverNow - actor.actionStartedAt
+      const frame = frameAt(atlas, age, actor.oneShot || oneShotPoses.has(actor.pose))
       const seatOffset = isSeated ? silhouette(atlas, frame).seatOffset * modelScale : 0
       const canInterpolate = previous && previous.pose !== 'sit' && !isSeated
+        && !previous.combat && !actor.combat && previous.generation === actor.generation
       return {
         ...actor,
         poseTime,
         atlas,
         frame,
         seatOffset,
+        groundX: actor.x,
+        groundY: actor.y,
+        opacity: deathOpacity(actor, serverNow),
         x: canInterpolate ? previous.x + (actor.x - previous.x) * 0.42 : actor.x,
         y: canInterpolate ? previous.y + (actor.y - previous.y) * 0.42 : actor.y + seatOffset,
       }
@@ -199,6 +250,17 @@ export function createParkRenderer(canvas, art) {
       ? Math.max(width - sceneWidth, Math.min(0, width / 2 - (player?.x ?? area.width / 2) * scale))
       : (width - sceneWidth) / 2
     const offsetY = (height - area.height * scale) / 2
+    const worldPointer = pointer && !state.matchEnded ? {
+      x: (pointer.x * width / canvas.clientWidth - offsetX) / scale,
+      y: (pointer.y * height / canvas.clientHeight - offsetY) / scale,
+    } : null
+    const nextHovered = pickModel(actors, local, worldPointer, modelScale, alphaAt,
+      hoveredId ? { id: hoveredId, contains: withinPose } : null)
+    const attackId = pickAttack ? pickModel(actors, local, worldPointer, modelScale, alphaAt) : null
+    if (hoveredId !== nextHovered) {
+      hoveredId = nextHovered
+      hoverStartedAt = time
+    }
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
     const scene = art[area.art]
     const sceneFrame = frameAt(scene, time)
@@ -211,6 +273,7 @@ export function createParkRenderer(canvas, art) {
       shadow.addColorStop(0, '#030611b8')
       shadow.addColorStop(1, '#03061100')
       ctx.save()
+      ctx.globalAlpha = actor.opacity
       ctx.translate(0, actor.y - actor.seatOffset + area.modelScale)
       ctx.scale(1, 0.33)
       ctx.fillStyle = shadow
@@ -218,12 +281,32 @@ export function createParkRenderer(canvas, art) {
       ctx.restore()
 
       if (actor.id === playerId) {
+        ctx.save()
+        ctx.globalAlpha = actor.opacity
         paintPlayerShadow(actor.x, actor.y + 3 * area.modelScale, playerShadowRadius)
+        ctx.restore()
       }
       ctx.save()
+      ctx.globalAlpha = actor.opacity
       ctx.translate(actor.x, actor.y)
       ctx.scale(actor.facing * modelScale, modelScale)
       paintFrame(ctx, actor.atlas, actor.frame, -80, -footRow)
+      if (actor.id === hoveredId) {
+        const key = `${actor.color}-${actor.pose}:${actor.frame}`
+        if (!tints.has(key)) {
+          const tint = document.createElement('canvas')
+          tint.width = 160
+          tint.height = 136
+          const tintCtx = tint.getContext('2d')
+          paintFrame(tintCtx, actor.atlas, actor.frame)
+          tintCtx.globalCompositeOperation = 'source-in'
+          tintCtx.fillStyle = '#910123'
+          tintCtx.fillRect(0, 0, 160, 136)
+          tints.set(key, tint)
+        }
+        ctx.globalAlpha = hoverOpacity(time - hoverStartedAt, reducedMotion.matches)
+        ctx.drawImage(tints.get(key), -80, -footRow)
+      }
       ctx.restore()
     }
 
@@ -266,6 +349,6 @@ export function createParkRenderer(canvas, art) {
         y: (offsetY + (player.y + headOffset.y * playerScale) * scale) * canvas.clientHeight / height,
       }
     }
-    return { faded, head }
+    return { faded, head, hoveredId, attackId }
   }
 }

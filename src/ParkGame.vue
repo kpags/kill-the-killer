@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { areas } from '../shared/park.js'
+import { killFlashMs } from '../shared/combat.js'
+import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
 import AudioSettings from './AudioSettings.vue'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
 
@@ -20,8 +22,8 @@ const directions = [
   { key: 'KeyS', label: 'Move down', arrow: '↓' },
   { key: 'KeyD', label: 'Move right', arrow: '→' },
 ]
+const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
-const profileThresholds = [0, 33, 66, 100]
 const pressed = new Set()
 const pointers = new Map()
 const movement = new Set([...directions.map(({ key }) => key), 'ShiftLeft'])
@@ -31,6 +33,8 @@ const artReady = ref(false)
 const error = ref('')
 const pauseScreen = ref(null)
 const pauseDialog = ref(null)
+const actionsOpen = ref(false)
+const actionsDialog = ref(null)
 const resumeButton = ref(null)
 const settingsButton = ref(null)
 const settingsPanel = ref(null)
@@ -38,17 +42,31 @@ const exiting = ref(false)
 const focusPanel = ref(null)
 const area = computed(() => areas[props.state?.area])
 const stamina = computed(() => props.state?.stamina ?? 100)
-const profile = computed(() => props.state?.profile ?? 33)
-const profileFills = computed(() => profileThresholds.slice(1).map((end, index) => {
-  const start = profileThresholds[index]
-  return Math.min(1, Math.max(0, (profile.value - start) / (end - start)))
-}))
+const profile = computed(() => props.state?.profile ?? profileBarSize)
+const profileFills = computed(() => Array.from({ length: profileBars }, (_, index) => profileFill(profile.value, index)))
+const profileLabel = computed(() => profile.value >= maxProfile ? 'Max' : `${Math.floor(profile.value * 10) / 10}%`)
 const target = computed(() => props.state?.target ?? null)
-const targetSprite = computed(() => target.value && idleSprites[`../assets/gameplay/${target.value.color}-idle.webp`])
+const purplePortrait = ref(null)
+const targetSprite = computed(() => {
+  const color = target.value?.color
+  if (color === 'purple' && purplePortrait.value) return purplePortrait.value
+  return color ? idleSprites[`../assets/gameplay/${color}-idle.webp`] : null
+})
 const spot = computed(() => area.value?.spots.find(({ id }) => id === props.state?.spotId))
 const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
+const alive = computed(() => props.state?.life === 'alive')
+const canAct = computed(() => alive.value && !props.state?.matchEnded && props.state?.mode !== 'combat')
+const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
+const lifecycleNotice = computed(() => {
+  if (props.state?.winner) return `${props.state.winner.name} wins!`
+  if (props.state?.respawnMs) return `Respawning in ${Math.ceil(props.state.respawnMs / 1000)}s`
+  if (props.state?.spectating) return 'Spectating'
+  if (props.state && !alive.value) return 'You were eliminated.'
+  return null
+})
 const prompt = computed(() => {
+  if (!canAct.value) return null
   switch (props.state?.mode) {
     case 'hide': return `Leave hiding · ${Math.ceil(props.state.hidingMs / 1000)}s`
     case 'sit': return 'Stand up'
@@ -56,7 +74,7 @@ const prompt = computed(() => {
     case 'inspect': return 'Close'
     default: {
       const nearby = spot.value
-      if (!nearby) return null
+      if (!nearby) return props.state?.mode === 'action' ? 'Stop action' : null
       if (nearby.hiding) return `Hide · ${nearby.name}`
       if (nearby.type.main === 'sitting') return `Sit · ${nearby.name}`
       if (nearby.type.sub === 'music') return `Dance · ${nearby.name}`
@@ -71,10 +89,12 @@ let repeatInput
 let disposed = false
 let fadedForeground = 0
 let activeCommand = false
+let pointer = null
+let hoveredActorId = null
 
 function transmit() {
   const active = new Set([...pressed, ...pointers.values()])
-  const blocked = pauseScreen.value || !artReady.value || props.reconnecting || props.state?.mode !== 'free'
+  const blocked = pauseScreen.value || actionsOpen.value || !artReady.value || props.reconnecting || !canMove.value
   props.input({
     x: blocked ? 0 : Number(active.has('KeyD')) - Number(active.has('KeyA')),
     y: blocked ? 0 : Number(active.has('KeyS')) - Number(active.has('KeyW')),
@@ -83,18 +103,106 @@ function transmit() {
 }
 
 function release() {
+  pointer = null
+  hoveredActorId = null
+  releaseMovement()
+}
+
+function releaseMovement() {
   pressed.clear()
   pointers.clear()
   transmit()
 }
 
 async function interact() {
-  if (pauseScreen.value || activeCommand || !prompt.value || props.reconnecting) return
+  if (pauseScreen.value || actionsOpen.value || activeCommand || !prompt.value || props.reconnecting) return
   activeCommand = true
   error.value = ''
   release()
   try {
     await props.command('interact')
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    activeCommand = false
+  }
+}
+
+function closeActions() {
+  if (!actionsOpen.value) return
+  actionsDialog.value.close()
+  actionsOpen.value = false
+  if (inspecting.value) focusPanel.value?.focus()
+  else refocus()
+}
+
+function toggleActions() {
+  if (actionsOpen.value) {
+    closeActions()
+    return
+  }
+  if (!canAct.value || !artReady.value || props.reconnecting || pauseScreen.value) return
+  actionsOpen.value = true
+  release()
+  actionsDialog.value.showModal()
+}
+
+async function selectAction(label) {
+  if (!actionsOpen.value || !canAct.value || activeCommand || props.reconnecting) return
+  activeCommand = true
+  error.value = ''
+  closeActions()
+  try {
+    await props.command('play_action', { action: label.toLowerCase() })
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    activeCommand = false
+  }
+}
+
+function pointAt(event) {
+  const rect = canvas.value.getBoundingClientRect()
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+}
+
+function hover(event) {
+  pointer = pointAt(event)
+}
+
+function clearHover() {
+  pointer = null
+  hoveredActorId = null
+}
+
+async function attack(event) {
+  if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value
+    || activeCommand || props.reconnecting || !artReady.value) return
+  pointer = pointAt(event)
+  const { attackId } = draw(props.state, performance.now(), props.playerId, false, pointer, true)
+  if (!attackId) return
+  activeCommand = true
+  error.value = ''
+  releaseMovement()
+  refocus()
+  try {
+    await props.command('attack', { actorId: attackId })
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    activeCommand = false
+  }
+}
+
+async function spectate(event) {
+  const field = event.currentTarget
+  const nextArea = Number(field.value)
+  field.value = String(props.state.area)
+  if (activeCommand || pauseScreen.value || props.reconnecting) return
+  activeCommand = true
+  error.value = ''
+  try {
+    await props.command('spectate_area', { area: nextArea })
   } catch (failure) {
     error.value = failure.message
   } finally {
@@ -109,6 +217,12 @@ function keyDown(event) {
     return
   }
   if (pauseScreen.value) return
+  if (event.code === 'KeyF') {
+    event.preventDefault()
+    if (!event.repeat) toggleActions()
+    return
+  }
+  if (actionsOpen.value) return
   if (movement.has(event.code)) {
     event.preventDefault()
     if (event.repeat) return
@@ -127,7 +241,7 @@ function keyUp(event) {
 }
 
 function holdTouch(event, key) {
-  if (pauseScreen.value) return
+  if (pauseScreen.value || actionsOpen.value) return
   event.currentTarget.setPointerCapture(event.pointerId)
   pointers.set(event.pointerId, key)
   transmit()
@@ -142,15 +256,24 @@ function refocus() {
 }
 
 watch(inspecting, (value, previous) => {
-  if (pauseScreen.value) return
+  if (pauseScreen.value || actionsOpen.value) return
   if (value) focusPanel.value?.focus()
   else if (previous) refocus()
 }, { flush: 'post' })
 
-watch(() => props.reconnecting, (value) => { if (value) release() })
+watch(() => props.reconnecting, (value) => {
+  if (value) {
+    closeActions()
+    release()
+  }
+})
+watch(canAct, (value) => { if (!value) closeActions() })
+watch(canMove, (value) => { if (!value) releaseMovement() })
+watch(() => props.state?.matchEnded, (value) => { if (value) release() })
 
 async function openPause() {
   if (pauseScreen.value) return
+  closeActions()
   pauseScreen.value = 'pause'
   error.value = ''
   release()
@@ -201,8 +324,11 @@ async function exitGame() {
 function render(now) {
   if (props.state) {
     const label = overheadPrompt.value
-    const { faded, head } = draw(props.state, now, props.playerId, Boolean(label))
+    const { faded, head, hoveredId } = draw(props.state, now, props.playerId, Boolean(label),
+      pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer)
     fadedForeground = faded
+    hoveredActorId = hoveredId
+    canvas.value.style.cursor = hoveredId && canAct.value ? 'pointer' : 'default'
     if (label && head) {
       const inset = 5
       const x = Math.max(inset, Math.min(
@@ -232,6 +358,7 @@ onMounted(async () => {
   try {
     const art = await loadParkArt()
     if (disposed) return
+    purplePortrait.value = art['purple-idle'].image.toDataURL()
     draw = createParkRenderer(canvas.value, art)
     artReady.value = true
     frameId = requestAnimationFrame(render)
@@ -259,9 +386,16 @@ function readState() {
     artReady: artReady.value,
     stamina: stamina.value,
     profile: profile.value,
+    score: props.state?.score,
     target: target.value,
+    life: props.state?.life,
+    spectating: props.state?.spectating,
+    respawnMs: props.state?.respawnMs,
+    winner: props.state?.winner,
+    hoveredActorId,
     modelScale: area.value?.modelScale,
     pause: pauseScreen.value,
+    actionsOpen: actionsOpen.value,
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     hidingMs: props.state?.hidingMs,
@@ -279,12 +413,13 @@ defineExpose({ readState })
     <header class="park-hud">
       <div class="park-profile">
         <div class="park-profile-track" role="meter" aria-labelledby="park-profile-label"
-          aria-valuemin="0" aria-valuemax="100" :aria-valuenow="profile" :aria-valuetext="`${profile}%`">
+          aria-valuemin="0" :aria-valuemax="maxProfile" :aria-valuenow="profile" :aria-valuetext="profileLabel">
           <span v-for="(fill, index) in profileFills" :key="index" class="park-profile-segment">
             <span class="park-profile-fill" :style="{ transform: `scaleX(${fill})` }"></span>
           </span>
         </div>
-        <span id="park-profile-label">Profile Meter</span>
+        <span class="park-profile-label"><span id="park-profile-label">Profile Meter</span><span>{{ profileLabel }}</span></span>
+        <span v-if="state?.score != null">Score {{ state.score }}</span>
       </div>
       <h1>{{ area?.name ?? 'Park' }}</h1>
       <div class="park-stamina">
@@ -307,9 +442,13 @@ defineExpose({ readState })
     </header>
 
     <div class="park-stage">
-      <canvas ref="canvas" tabindex="0" :aria-label="'Park · ' + (area?.name ?? 'loading')" />
+      <canvas ref="canvas" tabindex="0" :aria-label="'Park · ' + (area?.name ?? 'loading')"
+        @pointermove="hover" @pointerleave="clearHover" @pointercancel="clearHover" @click="attack" />
       <p v-if="error || reconnecting || !state || !artReady" class="park-notice" role="status">
         {{ error || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
+      </p>
+      <p v-if="state?.killAward" class="park-notice park-kill-award" role="status">
+        {{ state.killAward.rating }} +{{ state.killAward.points }}
       </p>
       <section v-if="inspecting" ref="focusPanel" class="park-panel" tabindex="-1" :aria-label="spot.name">
         <h2>{{ spot.name }}</h2>
@@ -319,6 +458,15 @@ defineExpose({ readState })
       <div v-else-if="prompt && artReady" ref="overheadPrompt" class="park-prompt" :class="{ 'park-hidden': hidden }">
         <kbd>E</kbd><span class="park-touch-label">Interact</span><span>{{ prompt }}</span>
       </div>
+      <section v-if="lifecycleNotice" class="park-lifecycle" aria-label="Match status">
+        <strong role="status">{{ lifecycleNotice }}</strong>
+        <label v-if="state.spectating" for="spectator-area">Watch area</label>
+        <select v-if="state.spectating" id="spectator-area" :value="state.area"
+          :disabled="reconnecting || Boolean(pauseScreen)" @change="spectate">
+          <option v-for="(place, index) in areas" :key="place.id" :value="index">{{ place.name }}</option>
+        </select>
+        <span v-if="state.winner">Use Pause to exit.</span>
+      </section>
     </div>
 
     <div class="park-touch" aria-label="Touch controls">
@@ -330,6 +478,7 @@ defineExpose({ readState })
           class="glass-button park-button"
           :class="key"
           :aria-label="label"
+          :disabled="!canMove || reconnecting"
           @pointerdown.prevent="holdTouch($event, key)"
           @pointerup="releaseTouch"
           @pointercancel="releaseTouch"
@@ -340,6 +489,7 @@ defineExpose({ readState })
         <button
           type="button"
           class="glass-button park-button"
+          :disabled="!canMove || reconnecting"
           @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
           @pointerup="releaseTouch"
           @pointercancel="releaseTouch"
@@ -348,8 +498,25 @@ defineExpose({ readState })
         <button type="button" class="glass-button park-button" :disabled="!prompt || reconnecting" @click="interact">
           Interact
         </button>
+        <button type="button" class="glass-button park-button" aria-haspopup="dialog"
+          :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">Actions</button>
       </div>
     </div>
+
+    <dialog ref="actionsDialog" class="park-actions-dialog" aria-label="Actions"
+      @cancel.prevent="closeActions" @click.self="closeActions">
+      <div class="park-actions-wheel">
+        <template v-for="(label, index) in actionSlots" :key="index">
+          <button v-if="label" type="button" class="park-action-slice"
+            :style="{ '--turn': `${index * 60}deg` }" @click="selectAction(label)">
+            <span>{{ label }}</span>
+          </button>
+          <div v-else class="park-action-slice park-action-blank" aria-hidden="true"
+            :style="{ '--turn': `${index * 60}deg` }"></div>
+        </template>
+        <button type="button" class="park-action-center" aria-label="Close Actions" @click="closeActions">Actions</button>
+      </div>
+    </dialog>
 
     <dialog ref="pauseDialog" class="park-pause-dialog" :aria-label="pauseScreen === 'settings' ? 'Settings' : 'Pause menu'"
       @cancel.prevent="cancelPause">
@@ -363,6 +530,9 @@ defineExpose({ readState })
         <p v-if="error || reconnecting" class="park-pause-status" role="status">{{ error || 'Reconnecting…' }}</p>
       </section>
     </dialog>
+
+    <div v-if="state?.killFlashAt != null && !reconnecting" :key="state.killFlashAt"
+      class="park-kill-flash" :style="{ '--flash-duration': `${killFlashMs}ms` }" aria-hidden="true"></div>
   </main>
 </template>
 
@@ -443,6 +613,13 @@ defineExpose({ readState })
   gap: 2px;
   width: 100px;
   height: 15px;
+}
+
+.park-profile-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 0.6875rem;
 }
 
 .park-profile-segment {
@@ -545,10 +722,64 @@ defineExpose({ readState })
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
+}
+
+.park-lifecycle {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 12px;
+  border: 1px solid #ffdfba65;
+  border-radius: 12px;
+  background: #251e25ee;
+  text-align: center;
+}
+
+.park-lifecycle select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid #ffdfba65;
+  border-radius: 8px;
+  background: #382820;
+  color: inherit;
+  font: inherit;
+  color-scheme: dark;
 }
 
 .park-stage canvas:focus {
   outline: none;
+}
+
+.park-kill-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow: inset 0 0 clamp(30px, 8vmin, 85px) clamp(10px, 2vmin, 24px) #ed1e35e6;
+  animation: park-kill-flash var(--flash-duration) ease-out both;
+}
+
+@keyframes park-kill-flash {
+  0% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .park-kill-flash {
+    animation: none;
+    opacity: 0.38;
+  }
 }
 
 .park-button {
@@ -574,6 +805,15 @@ defineExpose({ readState })
   border-radius: 12px;
   background: #251e25ee;
   font-size: 0.875rem;
+}
+
+.park-kill-award {
+  top: auto;
+  left: auto;
+  right: 12px;
+  bottom: 12px;
+  transform: none;
+  pointer-events: none;
 }
 
 .park-prompt {
@@ -623,6 +863,84 @@ defineExpose({ readState })
 .park-panel p {
   margin: 9px 0 12px;
   font-size: 0.9rem;
+}
+
+.park-actions-dialog {
+  width: min(19rem, calc(100vw - 24px), calc(100dvh - 24px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+}
+
+.park-actions-dialog::backdrop {
+  background: #101728b8;
+}
+
+.park-actions-wheel {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #171624;
+  box-shadow: 0 8px 34px #090915c7, inset 0 0 0 1px #ffdfba42;
+}
+
+.park-action-slice {
+  --slice: #785345;
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  clip-path: polygon(38.1% 27.8%, 23.4% 0, 76.6% 0, 61.9% 27.8%);
+  background: conic-gradient(from -28deg, var(--slice) 56deg, transparent 56deg);
+  mask-image: radial-gradient(circle closest-side, transparent 53%, #000 54%, #000 99%, transparent 100%);
+  color: #fff4e8;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+  transform: rotate(var(--turn));
+}
+
+.park-action-slice:hover,
+.park-action-slice:focus-visible {
+  --slice: #ffc15c;
+  color: #211413;
+}
+
+.park-action-slice span {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(calc(0deg - var(--turn)));
+}
+
+.park-action-blank {
+  --slice: #383143;
+  pointer-events: none;
+}
+
+.park-action-center {
+  position: absolute;
+  inset: 27%;
+  z-index: 1;
+  padding: 0;
+  border: 1px solid #ffdfba54;
+  border-radius: 50%;
+  background: #201e28;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.park-action-center:focus-visible {
+  outline: 2px solid #ffc15c;
+  outline-offset: 2px;
 }
 
 .park-pause-dialog {

@@ -1,8 +1,99 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, constrain } from '../shared/park.js'
+import { animationDuration } from '../shared/combat.js'
 import { stepParkNpcs } from '../server/parkNpcs.js'
-import { createParkSession, interactInPark, parkView } from '../server/parkSession.js'
+import { createParkSession, interactInPark, parkView, stepPark } from '../server/parkSession.js'
+import { attackInPark } from '../server/parkCombat.js'
+
+test('a player death causes a synchronized scream, nearest-edge flight and staggered return in its area', () => {
+  for (const [areaIndex, area] of areas.entries()) {
+    const game = createParkSession([{ id: 'attacker' }, { id: 'victim' }], () => 0.5)
+    const x = (area.left + area.right) / 2
+    const middle = constrain(area, x, 300)
+    for (const actor of game.players.values()) Object.assign(actor, { area: areaIndex }, middle)
+    const locals = () => [...game.npcs.values()].filter((actor) => actor.area === areaIndex)
+    const initialActorCount = locals().length
+    const left = locals()[0]
+    const right = locals()[1]
+    const aligned = locals()[2]
+    Object.assign(left, constrain(area, area.left + 12, 300), { facing: -1, mode: 'sit', pose: 'sit', seatSlot: 0 })
+    Object.assign(right, constrain(area, area.right - 12, 300), { facing: 1 })
+    Object.assign(aligned, middle, { facing: -1 })
+    assert.equal(attackInPark(game, 'attacker', 'victim', 100), undefined)
+    const panic = game.npcPanics.get(areaIndex)
+    const killed = game.players.get('victim')
+    const startsAt = killed.combat.endsAt + 1000
+    assert.equal(panic.startsAt, startsAt)
+    stepPark(game, 0, startsAt - 1)
+    assert.equal(left.pose, 'sit')
+    stepPark(game, 0, startsAt)
+    assert.equal(locals().length, initialActorCount)
+    assert.ok(locals().every(({ pose }) => pose === 'scream-two'))
+    assert.equal(left.facing, 1)
+    assert.equal(right.facing, -1)
+    assert.equal(aligned.facing, -1)
+    assert.equal(left.seatSlot, null)
+    assert.ok([...game.npcs.values()].filter(({ area }) => area !== areaIndex).every(({ pose }) => !pose.startsWith('scream')))
+    const view = parkView(game, 'attacker', startsAt)
+    const visibleRight = view.actors.find(({ id }) => id === right.id)
+    assert.equal(visibleRight.actionStartedAt, startsAt)
+    assert.equal(visibleRight.facing, -1)
+    assert.equal(visibleRight.oneShot, true)
+    const screamsEnd = startsAt + animationDuration(left.color, left.pose)
+    stepPark(game, 0, screamsEnd - 1)
+    assert.equal(left.pose, 'scream-two')
+    assert.equal(left.facing, 1)
+    assert.equal(right.facing, -1)
+    stepPark(game, 50, screamsEnd + 50)
+    assert.equal(left.pose, 'sprint')
+    assert.equal(right.pose, 'sprint')
+    assert.equal(left.facing, -1)
+    assert.equal(right.facing, 1)
+    let now = screamsEnd + 50
+    while (panic.returnsAt === null && now < screamsEnd + 10_000) stepPark(game, 50, now += 50)
+    assert.equal(panic.returnsAt, now + 5000)
+    assert.equal(locals().length, 0)
+    stepPark(game, 0, panic.returnsAt - 1)
+    assert.equal(locals().length, 0)
+    stepPark(game, 0, panic.returnsAt)
+    assert.equal(locals().length, 1)
+    assert.equal(locals()[0].pose, 'walk')
+    assert.ok([area.left, area.right].includes(locals()[0].x))
+
+    const capacities = new Map()
+    for (let time = 50; time < 12_000; time += 50) {
+      stepPark(game, 50, panic.returnsAt + time)
+      const crowd = locals().filter(({ crowd }) => crowd)
+      const talking = crowd.filter(({ pose }) => pose === 'talk')
+      for (const npc of talking) {
+        assert.ok(talking.some((other) => other !== npc && other.crowd.group === npc.crowd.group))
+        capacities.set(npc.crowd.group, talking.filter((other) => other.crowd.group === npc.crowd.group).length)
+      }
+      assert.ok(locals().length <= initialActorCount)
+    }
+    assert.equal(capacities.size, area.crowds.length)
+    assert.ok([...capacities.values()].every((count) => count === 2))
+  }
+})
+
+test('a surviving solo crowd member uses a phone while an earlier death reaction is pending', () => {
+  const game = createParkSession([{ id: 'attacker' }], () => 0.5)
+  const actor = game.players.get('attacker')
+  const [first, second] = [...game.npcs.values()]
+  assert.equal(first.crowd.group, second.crowd.group)
+  Object.assign(actor, { x: first.x, y: first.y })
+  assert.equal(attackInPark(game, actor.id, first.id, 10), undefined)
+  assert.match(second.pose, /^phone-/)
+  const panic = game.npcPanics.get(0)
+  const originalStart = panic.startsAt
+  assert.equal(panic.deathX, first.x)
+  stepPark(game, 0, 250)
+  Object.assign(actor, { x: second.x, y: second.y })
+  assert.equal(attackInPark(game, actor.id, second.id, 260), undefined)
+  assert.equal(game.npcPanics.get(0).startsAt, originalStart)
+  assert.equal(game.npcPanics.get(0).deathX, first.x)
+})
 
 test('every blue marker spawns up to three NPCs with distinct colors and the matching pose', () => {
   for (const [sample, size] of [[0, 1], [0.48, 2], [1 - Number.EPSILON, 3]]) {

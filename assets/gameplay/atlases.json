@@ -1123,5 +1123,1349 @@
       150,
       150
     ]
+  },
+  "blue-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "blue-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "blue-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "blue-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "blue-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "green-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "green-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "green-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "green-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "green-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "orange-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "orange-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "orange-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "orange-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "orange-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "purple-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "purple-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "purple-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "purple-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "purple-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "red-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "red-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "red-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "red-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "red-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "yellow-kill": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
+  },
+  "yellow-punch": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "yellow-death": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "yellow-pre-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "yellow-stun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "blue-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "blue-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "blue-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "blue-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "blue-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "blue-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "green-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "green-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "green-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "green-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "green-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "green-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "orange-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "orange-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "orange-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "orange-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "orange-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "orange-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "purple-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "purple-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "purple-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "purple-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "purple-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "purple-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "red-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "red-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "red-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "red-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "red-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "red-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "yellow-talk-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "yellow-talk-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ]
+  },
+  "yellow-talk-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110,
+      110
+    ]
+  },
+  "yellow-dance-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "yellow-dance-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "yellow-dance-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90,
+      90
+    ]
+  },
+  "blue-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "blue-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "blue-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "green-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "green-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "green-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "orange-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "orange-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "orange-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "purple-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "purple-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "purple-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "red-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "red-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "red-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "yellow-scream-one": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "yellow-scream-two": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "yellow-scream-three": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
   }
 }

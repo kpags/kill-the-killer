@@ -5,6 +5,7 @@ export const designWidth = 719
 export const designHeight = 357
 export const standingHeight = 83
 export const walkSpeed = 72
+export const sprintSpeed = 121
 const edgePadding = 45
 const spotRange = 21
 

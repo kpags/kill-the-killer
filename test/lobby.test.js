@@ -3,6 +3,7 @@ import { once } from 'node:events'
 import test from 'node:test'
 import { WebSocket } from 'ws'
 import { createLobbyServer } from '../server/lobby.js'
+import { areas, constrain } from '../shared/park.js'
 
 async function setup(context, options) {
   const server = createLobbyServer({ port: 0, host: '127.0.0.1', reconnectGraceMs: 500, ...options })
@@ -20,10 +21,10 @@ async function setup(context, options) {
     await once(socket, 'open')
     let requestId = 0
 
-    async function waitFor(predicate) {
+    async function waitFor(predicate, timeout = 2000) {
       let index = messages.findIndex(predicate)
       while (index < 0) {
-        await once(socket, 'message', { signal: AbortSignal.timeout(2000) })
+        await once(socket, 'message', { signal: AbortSignal.timeout(timeout) })
         index = messages.findIndex(predicate)
       }
       return messages.splice(0, index + 1).at(-1)
@@ -90,6 +91,176 @@ test('rooms synchronize human numbering and enforce slot and player permissions'
   const closed = await third.waitFor(({ type }) => type === 'room_closed')
   assert.match(closed.reason, /host left/)
   assert.match((await guest.command('join', { code })).error, /not found/)
+})
+
+test('Actions wheel commands broadcast the same chosen clip and stop on movement', { timeout: 5000 }, async (context) => {
+  const connect = await setup(context)
+  const host = await connect()
+  const created = await host.command('create')
+  const guest = await connect()
+  await guest.command('join', { code: created.room.code })
+  await host.command('start')
+  const playerIn = ({ state }) => state?.actors.find(({ id }) => id === created.playerId)
+
+  assert.match((await host.command('play_action', { action: 'idle' })).error, /unavailable/)
+  for (const action of ['phone', 'talk', 'dance', 'scream']) {
+    assert.equal((await host.command('play_action', { action })).error, undefined)
+    const selected = await guest.waitFor((message) => playerIn(message)?.pose.startsWith(`${action}-`))
+    const actor = playerIn(selected)
+    assert.match(actor.pose, /-(one|two|three)$/)
+    assert.equal(actor.oneShot, undefined)
+    const own = await host.waitFor((message) => playerIn(message)?.actionStartedAt === actor.actionStartedAt && message.state?.mode === 'action')
+    assert.equal(playerIn(own).pose, actor.pose)
+  }
+
+  host.socket.send(JSON.stringify({ type: 'game_input', x: 1, y: 0, sprint: false }))
+  const update = await guest.waitFor((message) => playerIn(message)?.pose === 'walk')
+  assert.equal(playerIn(update).actionStartedAt, undefined)
+})
+
+async function approach(client, playerId, victimId) {
+  let game = await client.waitFor(({ type }) => type === 'park')
+  for (let tick = 0; tick < 80; tick++) {
+    const actor = game.state.actors.find(({ id }) => id === playerId)
+    const victim = game.state.actors.find(({ id }) => id === victimId)
+    const dx = victim.x - actor.x
+    const dy = victim.y - actor.y
+    if (Math.hypot(dx, dy) <= 8) {
+      client.socket.send(JSON.stringify({ type: 'game_input', x: 0, y: 0, sprint: false }))
+      return
+    }
+    client.socket.send(JSON.stringify({ type: 'game_input',
+      x: Math.abs(dx) > 4 ? Math.sign(dx) : 0,
+      y: Math.abs(dy) > 4 ? Math.sign(dy) : 0, sprint: false }))
+    game = await client.waitFor(({ type }) => type === 'park')
+  }
+  assert.fail('Could not move the test player within attack range')
+}
+
+test('combat broadcasts the same death timing and reconnect restores elimination and the winner', { timeout: 10_000 }, async (context) => {
+  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const host = await connect()
+  const created = await host.command('create')
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  assert.match((await host.command('attack', { actorId: joined.playerId })).error, /Unknown room command/)
+  await host.command('start')
+  assert.match((await guest.command('spectate_area', { area: 1 })).error, /not spectating/)
+  assert.match((await host.command('attack', { actorId: joined.playerId })).error, /20 pixels/)
+  await approach(host, created.playerId, joined.playerId)
+  assert.equal((await host.command('attack', { actorId: joined.playerId })).error, undefined)
+  const hostDeath = await host.waitFor(({ state }) => state?.actors.some(({ id, life }) => id === joined.playerId && life === 'dying'))
+  const guestDeath = await guest.waitFor(({ state }) => state?.life === 'dying')
+  const corpse = hostDeath.state.actors.find(({ id }) => id === joined.playerId)
+  const ownCorpse = guestDeath.state.actors.find(({ id }) => id === joined.playerId)
+  assert.deepEqual(corpse.combat, ownCorpse.combat)
+  assert.equal(corpse.vanishesAt, ownCorpse.vanishesAt)
+  assert.equal(corpse.pose, 'death')
+  assert.equal(hostDeath.state.killFlashAt, corpse.combat.startedAt)
+  assert.equal(guestDeath.state.killFlashAt, undefined)
+  assert.match((await guest.command('interact')).error, /cannot interact/)
+  assert.match((await guest.command('attack', { actorId: created.playerId })).error, /cannot attack/)
+  guest.socket.close()
+  const replacement = await connect()
+  assert.equal((await replacement.command('resume', { token: joined.token })).error, undefined)
+  const recovered = await replacement.waitFor(({ state }) => state?.life === 'dying')
+  assert.equal(recovered.state.actors.find(({ id }) => id === joined.playerId).vanishesAt, corpse.vanishesAt)
+  const screamsIn = ({ state }) => state?.actors.filter(({ pose }) => pose.startsWith('scream-')) ?? []
+  const [hostPanic, guestPanic] = await Promise.all([
+    host.waitFor((message) => screamsIn(message).length > 0),
+    replacement.waitFor((message) => screamsIn(message).length > 0),
+  ])
+  assert.deepEqual(screamsIn(hostPanic), screamsIn(guestPanic))
+  assert.ok(screamsIn(hostPanic).every(({ actionStartedAt }) => actionStartedAt === corpse.combat.endsAt + 1000))
+  const end = await replacement.waitFor(({ state }) => state?.spectating && state.winner, 4000)
+  assert.equal(end.state.winner.id, created.playerId)
+  assert.ok(end.state.actors.every(({ id }) => id !== created.playerId && id !== joined.playerId))
+  assert.equal((await replacement.command('spectate_area', { area: 5 })).error, undefined)
+  assert.equal((await replacement.waitFor(({ state }) => state?.area === 5)).state.spectating, true)
+  replacement.socket.close()
+  const spectator = await connect()
+  await spectator.command('resume', { token: joined.token })
+  const recoveredSpectator = await spectator.waitFor(({ state }) => state?.spectating && state.area === 5)
+  assert.equal(recoveredSpectator.state.winner.id, created.playerId)
+  await host.command('leave')
+  await spectator.waitFor(({ type }) => type === 'room_closed')
+})
+
+test('Hitman reconnect during death recovers the five-second respawn and a green-boundary spawn', { timeout: 12_000 }, async (context) => {
+  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const host = await connect()
+  const created = await host.command('create')
+  await host.command('select_mode', { modeId: 'Hitman' })
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  await host.command('start')
+  await approach(host, created.playerId, joined.playerId)
+  assert.equal((await host.command('attack', { actorId: joined.playerId })).error, undefined)
+  const death = await guest.waitFor(({ state }) => state?.life === 'dying')
+  assert.ok(death.state.respawnMs > 4000 && death.state.respawnMs <= 5000)
+  const startedAt = death.state.actors.find(({ id }) => id === joined.playerId).combat.startedAt
+  guest.socket.close()
+  const replacement = await connect()
+  await replacement.command('resume', { token: joined.token })
+  const restored = await replacement.waitFor(({ state }) => state?.life === 'dying')
+  assert.ok(restored.state.respawnMs > 0)
+  const waiting = await replacement.waitFor(({ state }) => state?.life === 'respawning', 4000)
+  assert.equal(waiting.state.spectating, false)
+  replacement.socket.close()
+  const respawning = await connect()
+  await respawning.command('resume', { token: joined.token })
+  const recoveredWait = await respawning.waitFor(({ state }) => state?.life === 'respawning')
+  assert.ok(recoveredWait.state.respawnMs > 0)
+  const respawned = await respawning.waitFor(({ state }) => state?.life === 'alive', 4000)
+  assert.ok(respawned.state.serverTime - startedAt >= 5000)
+  assert.equal(respawned.state.respawnMs, 0)
+  assert.equal(respawned.state.winner, null)
+  const actor = respawned.state.actors.find(({ id }) => id === joined.playerId)
+  const point = constrain(areas[respawned.state.area], actor.x, actor.y)
+  assert.ok(Math.abs(point.x - actor.x) < 0.11 && Math.abs(point.y - actor.y) < 0.11)
+  assert.equal(actor.pose, 'idle')
+  assert.equal(actor.generation, 1)
+  assert.equal(respawned.state.stamina, 100)
+  assert.equal(respawned.state.profile, 33)
+})
+
+test('reconnecting a stunned killer preserves the shared stun deadline and target', { timeout: 10_000 }, async (context) => {
+  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const host = await connect()
+  const created = await host.command('create')
+  const members = []
+  for (let index = 0; index < 2; index++) {
+    const client = await connect()
+    const joined = await client.command('join', { code: created.room.code })
+    members.push({ client, ...joined })
+  }
+  await host.command('start')
+  for (const member of members) {
+    member.game = await member.client.waitFor(({ type }) => type === 'park')
+  }
+  const killer = members.find(({ game }) => game.state.target.name === 'Player 1')
+  assert.ok(killer)
+  await approach(host, created.playerId, killer.playerId)
+  assert.equal((await host.command('attack', { actorId: killer.playerId })).error, undefined)
+  const pre = await killer.client.waitFor(({ state }) => state?.actors.some(({ id, pose }) => id === killer.playerId && pose === 'pre-stun'))
+  const reaction = pre.state.actors.find(({ id }) => id === killer.playerId)
+  killer.client.socket.close()
+  const replacement = await connect()
+  await replacement.command('resume', { token: killer.token })
+  const stun = await replacement.waitFor(({ state }) => state?.actors.some(({ id, pose }) => id === killer.playerId && pose === 'stun'))
+  const stunned = stun.state.actors.find(({ id }) => id === killer.playerId)
+  assert.equal(stunned.combat.startedAt, reaction.combat.endsAt)
+  assert.equal(stunned.combat.endsAt, reaction.combat.endsAt + 3000)
+  assert.deepEqual(stun.state.target, pre.state.target)
+  assert.match((await replacement.command('interact')).error, /cannot interact/)
+  replacement.socket.send(JSON.stringify({ type: 'game_input', x: 1, y: 0, sprint: true }))
+  const still = await replacement.waitFor(({ state }) => state?.actors.some(({ id, pose }) => id === killer.playerId && pose === 'stun'))
+  const same = still.state.actors.find(({ id }) => id === killer.playerId)
+  assert.equal(same.x, stunned.x)
+  assert.equal(same.y, stunned.y)
+  const recovered = await replacement.waitFor(({ state }) => state?.actors.some(({ id, pose }) => id === killer.playerId && pose === 'idle'), 4000)
+  assert.ok(recovered.state.serverTime >= stunned.combat.endsAt)
+  assert.deepEqual(recovered.state.target, pre.state.target)
 })
 
 test('mode selection is host-only, synchronized, and restored on join and reconnect', { timeout: 5000 }, async (context) => {

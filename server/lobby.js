@@ -2,7 +2,8 @@ import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { WebSocket, WebSocketServer } from 'ws'
 import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from '../shared/lobbyRules.js'
-import { createParkSession, interactInPark, parkView, setParkInput, stepPark, stopParkInput } from './parkSession.js'
+import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark, stopParkInput } from './parkSession.js'
+import { attackInPark, spectateInPark } from './parkCombat.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const modeIds = Object.keys(JSON.parse(readFileSync(new URL('../data/game_modes.json', import.meta.url), 'utf8')))
@@ -182,8 +183,13 @@ export function createLobbyServer({
       return result()
     }
     if (room.game) {
-      if (type !== 'interact') return reject('This action is only available in the lobby.')
-      const interactionError = interactInPark(room.game, player.id, performance.now())
+      const now = performance.now()
+      let interactionError
+      if (type === 'interact') interactionError = interactInPark(room.game, player.id, now)
+      else if (type === 'play_action') interactionError = playParkAction(room.game, player.id, message.action, now)
+      else if (type === 'attack') interactionError = attackInPark(room.game, player.id, message.actorId, now)
+      else if (type === 'spectate_area') interactionError = spectateInPark(room.game, player.id, message.area)
+      else return reject('This action is only available in the lobby.')
       if (interactionError) return reject(interactionError)
       broadcastPark(room)
       return result()
@@ -193,7 +199,7 @@ export function createLobbyServer({
       case 'start':
         if (!isHost) return reject('Only the host can start.')
         if (room.selectedMapId !== 'park') return reject('This map is unavailable for gameplay.')
-        room.game = createParkSession(room.slots.filter(Boolean))
+        room.game = createParkSession(room.slots.filter(Boolean), Math.random, room.selectedModeId)
         broadcast(room)
         broadcastPark(room)
         return result()

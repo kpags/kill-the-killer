@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { areas, colors, constrain, groundRange, walkSpeed } from '../shared/park.js'
+import { areas, colors, constrain, groundRange, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { claimSeat } from './parkSeats.js'
+import { animationDuration, isLiving, screamPoses } from '../shared/combat.js'
 
 const phonePoses = ['phone-one', 'phone-two', 'phone-three']
 const directions = [-1, 1]
 const maxCrowdSize = 3
+const screamDelay = 1000
+const returnDelay = 5000
 // In left-to-right order, the outer talkers always face inward.
 const crowdFacings = {
   1: [[-1], [1]],
@@ -38,6 +41,8 @@ export function spawnParkNpcs(game) {
           facing: facings[index],
           pose,
           animationOffset: index * 430,
+          crowd: { group: `${areaIndex}:${x}:${y}`, pose, facing: facings[index],
+            position: constrain(area, x + (index + 0.5) * width / count, y + height * (index % 2 ? 0.65 : 0.4)) },
         }
         game.npcs.set(actor.id, actor)
       }
@@ -101,7 +106,13 @@ function walkTo(actor, area, goal, distance) {
   const y = actor.y + dy * fraction
   const next = constrain(area, x, y)
   if (Math.abs(y - next.y) > 0.01) {
-    // Approach a step in the green boundary before walking across it.
+    // Follow the current ground line until the requested depth becomes reachable.
+    const along = constrain(area, x, actor.y)
+    if (dx && Math.abs(along.y - actor.y) <= 0.01) {
+      actor.x = along.x
+      actor.facing = Math.sign(dx)
+      return false
+    }
     const lift = next.y - actor.y
     Object.assign(actor, constrain(area, actor.x, actor.y + Math.sign(lift) * Math.min(distance, Math.abs(lift))))
     return false
@@ -129,14 +140,153 @@ function startActivity(game, slot, now) {
   actor.spotId = spot.id
 }
 
-export function stepParkNpcs(game, elapsedMs, now) {
-  const distance = walkSpeed * elapsedMs / 1000
+function updateConversation(game, group) {
+  const members = [...game.npcs.values()]
+    .filter((actor) => actor.crowd?.group === group && isLiving(actor) && !actor.arrival && actor.mode !== 'panic')
+    .sort((first, second) => first.x - second.x)
+  if (members.length === 1) {
+    const actor = members[0]
+    if (!phonePoses.includes(actor.pose)) actor.pose = pick(phonePoses, game.random)
+  } else if (members.length > 1) {
+    const facings = pick(crowdFacings[members.length], game.random)
+    members.forEach((actor, index) => {
+      actor.pose = 'talk'
+      actor.facing = facings[index]
+    })
+  }
+}
+
+export function queueNpcPanic(game, victim, deathEndsAt) {
+  if (victim.crowd) updateConversation(game, victim.crowd.group)
+  if (!game.npcPanics.has(victim.area)) {
+    game.npcPanics.set(victim.area, {
+      startsAt: deathEndsAt + screamDelay, deathX: victim.x, started: false, returnsAt: null,
+    })
+  }
+}
+
+function retireNpc(game, actor, respawnAt) {
+  game.npcs.delete(actor.id)
+  const slot = game.walkers.find((candidate) => candidate.actor === actor)
+  if (slot) {
+    Object.assign(slot, { actor: null, visit: null, resumeAt: null, respawnAt })
+  } else if (actor.crowd) {
+    game.crowdRespawns.push({ area: actor.area, crowd: actor.crowd, respawnAt })
+  }
+}
+
+function startPanic(game, areaIndex, { startsAt, deathX }) {
+  const area = areas[areaIndex]
+  for (const actor of game.npcs.values()) {
+    if (actor.area !== areaIndex || !isLiving(actor)) continue
+    Object.assign(actor, constrain(area, actor.x, actor.y))
+    const pose = pick(screamPoses, game.random)
+    Object.assign(actor, {
+      mode: 'panic', pose, actionStartedAt: startsAt, arrival: null,
+      spotId: null, seatSlot: null,
+      facing: Math.sign(deathX - actor.x) || actor.facing,
+      screamEndsAt: startsAt + animationDuration(actor.color, pose),
+      fleeDirection: actor.x <= (area.left + area.right) / 2 ? -1 : 1,
+    })
+  }
+}
+
+function releasePanic(game, areaIndex, returnsAt) {
+  let count = 0
+  const nextReturn = () => returnsAt + (count++ === 0 ? 0 : randomTime(game.random, 100, 1600))
   for (const slot of game.walkers) {
+    if (slot.area !== areaIndex || slot.actor) continue
+    slot.respawnAt = nextReturn()
+    slot.direction = pick(directions, game.random)
+  }
+  for (const pending of game.crowdRespawns) {
+    if (pending.area !== areaIndex) continue
+    pending.respawnAt = nextReturn()
+    pending.returnFromEdge = true
+  }
+  game.npcPanics.delete(areaIndex)
+}
+
+function stepPanic(game, areaIndex, panic, elapsedMs, now) {
+  if (now < panic.startsAt) return
+  if (!panic.started) {
+    panic.started = true
+    startPanic(game, areaIndex, panic)
+  }
+  if (panic.returnsAt !== null) {
+    if (now >= panic.returnsAt) releasePanic(game, areaIndex, panic.returnsAt)
+    return
+  }
+
+  const area = areas[areaIndex]
+  let fleeing = false
+  for (const actor of game.npcs.values()) {
+    if (actor.area !== areaIndex || actor.mode !== 'panic' || !isLiving(actor)) continue
+    if (now < actor.screamEndsAt) {
+      fleeing = true
+      continue
+    }
+    actor.pose = 'sprint'
+    actor.facing = actor.fleeDirection
+    actor.actionStartedAt = null
+    const edge = actor.fleeDirection < 0 ? area.left : area.right
+    const distance = sprintSpeed * Math.min(elapsedMs, now - actor.screamEndsAt) / 1000
+    if (walkTo(actor, area, constrain(area, edge, actor.y), distance)) retireNpc(game, actor, Infinity)
+    else fleeing = true
+  }
+  if (!fleeing) panic.returnsAt = now + returnDelay
+}
+
+function spawnCrowdReplacement(game, pending) {
+  const { area, crowd, returnFromEdge } = pending
+  const used = new Set([...game.npcs.values()]
+    .filter((actor) => actor.crowd?.group === crowd.group).map((actor) => actor.color))
+  const actor = {
+    id: randomUUID(), area, crowd, ...crowd.position,
+    color: pick(colors.filter((color) => !used.has(color)), game.random),
+    facing: crowd.facing, pose: 'idle',
+  }
+  if (returnFromEdge) {
+    const zone = areas[area]
+    const direction = pick(directions, game.random)
+    const x = direction > 0 ? zone.left : zone.right
+    Object.assign(actor, constrain(zone, x, crowd.position.y), {
+      facing: direction, pose: 'walk', arrival: crowd.position,
+    })
+  }
+  game.npcs.set(actor.id, actor)
+  if (!returnFromEdge) updateConversation(game, crowd.group)
+}
+
+export function stepParkNpcs(game, elapsedMs, now) {
+  for (const actor of game.npcs.values()) {
+    if (actor.life !== 'eliminated') continue
+    const respawnAt = actor.vanishesAt + randomTime(game.random, 5000, 10_000)
+    retireNpc(game, actor, respawnAt)
+  }
+  for (const [area, panic] of game.npcPanics) {
+    stepPanic(game, area, panic, elapsedMs, now)
+  }
+  game.crowdRespawns = game.crowdRespawns.filter((pending) => {
+    if (now < pending.respawnAt || game.npcPanics.get(pending.area)?.started) return true
+    spawnCrowdReplacement(game, pending)
+    return false
+  })
+  const distance = walkSpeed * elapsedMs / 1000
+  for (const actor of game.npcs.values()) {
+    if (!actor.arrival || !isLiving(actor)) continue
+    if (!walkTo(actor, areas[actor.area], actor.arrival, distance)) continue
+    actor.arrival = null
+    updateConversation(game, actor.crowd.group)
+  }
+  for (const slot of game.walkers) {
+    if (game.npcPanics.get(slot.area)?.started) continue
     const { actor } = slot
     if (!actor) {
       if (now >= slot.respawnAt) spawnWalker(game, slot, -slot.direction)
       continue
     }
+    if (!isLiving(actor)) continue
     const area = areas[slot.area]
     if (slot.resumeAt !== null) {
       if (now < slot.resumeAt) continue

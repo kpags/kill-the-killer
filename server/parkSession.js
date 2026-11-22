@@ -1,18 +1,20 @@
 import { randomInt } from 'node:crypto'
-import { areas, colors, constrain, nearbySpot, walkSpeed } from '../shared/park.js'
+import { areas, colors, constrain, nearbySpot, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
+import { isLiving, killFlashMs } from '../shared/combat.js'
+import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
+import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 
-const sprintSpeed = 121
 const staminaLimit = 100
-const startProfile = 33
 const profileRange = 36
-const hideTransitionMs = 1000
 const hideLimit = 10_000
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const mainSpawns = [[130, 290], [215, 311], [338, 290], [70, 311], [277, 290], [411, 311]]
+const parkActions = ['phone', 'talk', 'dance', 'scream']
+const actionVariants = ['one', 'two', 'three']
 
-export function createParkSession(players, random = Math.random) {
+export function createParkSession(players, random = Math.random, modeId = 'last_man_standing') {
   const palette = [...colors]
   const roster = new Map(players.map((player, index) => {
     const [color] = palette.splice(randomInt(palette.length), 1)
@@ -28,12 +30,16 @@ export function createParkSession(players, random = Math.random) {
       facing: 1,
       pose: 'idle',
       mode: 'free',
+      life: 'alive',
+      combat: null,
+      generation: 0,
       spotId: null,
       seatSlot: null,
       hideUntil: 0,
       stamina: staminaLimit,
-      profile: startProfile,
+      profile: profileBarSize,
       profileHideMs: 0,
+      score: 0,
       recoveryMs: 0,
       exhausted: false,
       input: stopped,
@@ -46,13 +52,18 @@ export function createParkSession(players, random = Math.random) {
     targetOrder[index] = targetOrder[other]
     targetOrder[other] = current
   }
-  const game = { players: roster, targetOrder, npcs: new Map(), walkers: [], random }
+  const game = {
+    players: roster, targetOrder, targets: new Map(), modeId,
+    initialPlayerCount: players.length, winner: null, winnerAt: null,
+    npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
+  }
+  refreshParkTargets(game, true)
   spawnParkNpcs(game)
   return game
 }
 
 export function setParkInput(actor, input, now) {
-  if (!actor || actor.isBot) return
+  if (!isLiving(actor) || actor.isBot || actor.combat) return
   if (![-1, 0, 1].includes(input.x) || ![-1, 0, 1].includes(input.y) || typeof input.sprint !== 'boolean') return
   actor.input = { x: input.x, y: input.y, sprint: input.sprint, until: now + 300 }
   if (!input.sprint) actor.exhausted = false
@@ -62,14 +73,11 @@ export function stopParkInput(actor) {
   if (actor) actor.input = stopped
 }
 
-function adjustProfile(actor, amount) {
-  actor.profile = Math.max(0, Math.min(100, actor.profile + amount))
-}
-
 function profileRate(game, actor, previous) {
   if (actor.mode === 'sit') return 8
   if (actor.mode === 'dance') return 3
-  if (actor.mode !== 'free') return 0
+  if (actor.mode !== 'free' && actor.mode !== 'action') return 0
+  if (actor.mode === 'action' && actor.pose.startsWith('dance-') && nearbySpot(actor)?.type.sub === 'music') return 3
 
   const walking = actor.pose === 'walk' || actor.pose === 'sprint'
   const range = profileRange * areas[actor.area].modelScale
@@ -98,12 +106,27 @@ function endInteraction(actor) {
   actor.spotId = null
   actor.seatSlot = null
   actor.hideUntil = 0
+  actor.actionStartedAt = null
+}
+
+export function playParkAction(game, playerId, action, now) {
+  const actor = game.players.get(playerId)
+  if (!isLiving(actor) || actor.isBot || actor.combat || game.winner) return 'You cannot perform an action right now.'
+  if (!parkActions.includes(action)) return 'That action is unavailable.'
+  endInteraction(actor)
+  stopParkInput(actor)
+  const variant = actionVariants[Math.floor(game.random() * actionVariants.length)]
+  actor.mode = 'action'
+  actor.pose = `${action}-${variant}`
+  actor.actionStartedAt = now
 }
 
 export function interactInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
   if (!actor || actor.isBot) return
-  if (actor.mode !== 'free') {
+  if (!isLiving(actor) || actor.combat || game.winner) return 'You cannot interact right now.'
+  if (actor.mode === 'action') endInteraction(actor)
+  else if (actor.mode !== 'free') {
     endInteraction(actor)
     return
   }
@@ -162,11 +185,19 @@ function move(actor, dx, dy) {
 }
 
 export function stepPark(game, elapsedMs, now) {
+  const respawned = advanceParkCombat(game, now)
   for (const actor of game.players.values()) {
-    if (actor.isBot) continue
-    const previous = { area: actor.area, x: actor.x, y: actor.y }
+    if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
+    const hidingMs = Math.min(elapsedMs, actor.profileHideMs)
+    actor.profileHideMs -= hidingMs
+    if (actor.combat) {
+      adjustProfile(actor, hideProfileRate * hidingMs / 1000)
+      continue
+    }
+    const previous = { area: actor.area, x: actor.x, y: actor.y }
     const input = actor.input.until >= now ? actor.input : stopped
+    if (actor.mode === 'action' && (input.x || input.y || input.sprint)) endInteraction(actor)
     const moving = Boolean(input.x || input.y) && actor.mode === 'free'
     const sprinting = moving && input.sprint && !actor.exhausted && actor.stamina > 0
     let spentMs = 0
@@ -201,11 +232,9 @@ export function stepPark(game, elapsedMs, now) {
         actor.recoveryMs -= 3000
       }
     }
-    const hidingMs = Math.min(elapsedMs, actor.profileHideMs)
-    actor.profileHideMs -= hidingMs
     const sprintMs = Math.min(spentMs, elapsedMs - hidingMs)
     const ordinaryMs = elapsedMs - hidingMs - sprintMs
-    const profileChange = (profileRate(game, actor, previous) * ordinaryMs - 8 * sprintMs - 5 * hidingMs) / 1000
+    const profileChange = (profileRate(game, actor, previous) * ordinaryMs - 8 * sprintMs + hideProfileRate * hidingMs) / 1000
     adjustProfile(actor, profileChange)
   }
   stepParkNpcs(game, elapsedMs, now)
@@ -213,20 +242,42 @@ export function stepPark(game, elapsedMs, now) {
 
 export function parkView(game, playerId, now) {
   const actor = game.players.get(playerId)
-  const order = game.targetOrder.filter((id) => game.players.has(id))
-  const target = order.length > 1 ? game.players.get(order[(order.indexOf(playerId) + 1) % order.length]) : null
+  refreshParkTargets(game)
+  const target = game.players.get(game.targets.get(playerId))
+  const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
+  const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
+  const restricted = !isLiving(actor) && game.modeId === 'last_man_standing'
   const actors = [...game.players.values(), ...game.npcs.values()]
-    .filter((other) => other.area === actor.area && (other === actor || other.mode !== 'hide'))
+    .filter((other) => other.area === area
+      && (isLiving(other) || (other.life === 'dying' && now < other.vanishesAt))
+      && (other === actor || other.mode !== 'hide')
+      && (!restricted || game.npcs.has(other.id) || other === actor
+        || other.life === 'dying' || other.combat || other.pose === 'sprint'))
   return {
-    area: actor.area,
+    area,
+    serverTime: now,
+    killFlashAt: actor.killFlashAt != null && now - actor.killFlashAt < killFlashMs ? actor.killFlashAt : undefined,
+    life: actor.life,
+    spectating,
+    respawnMs: actor.respawnAt ? Math.ceil(Math.max(0, actor.respawnAt - now)) : 0,
+    matchEnded: Boolean(game.winner),
+    winner: game.winner && now >= game.winnerAt ? game.winner : null,
     stamina: Math.round(actor.stamina * 10) / 10,
-    profile: Math.round(actor.profile * 10) / 10,
+    profile: actor.profile,
+    score: game.modeId === 'Hitman' ? actor.score : undefined,
+    killAward: actor.killAward && now < actor.killAward.until ? actor.killAward : undefined,
     target: target ? { name: target.name, color: target.color } : null,
     mode: actor.mode,
-    spotId: actor.spotId ?? nearbySpot(actor)?.id ?? null,
+    spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),
-    actors: actors.map(({ id, color, x, y, facing, pose, mode, animationOffset }) => ({
-      id, color, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, facing, pose, hidden: mode === 'hide', animationOffset,
+    actors: actors.map(({ id, color, area: actorArea, x, y, facing, pose, mode, animationOffset, actionStartedAt,
+      life, combat, vanishesAt, generation }) => ({
+      id, color, area: actorArea, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
+      facing, pose, hidden: mode === 'hide', animationOffset, life: life ?? 'alive',
+      combat: combat ? { startedAt: combat.startedAt, endsAt: combat.endsAt } : null,
+      actionStartedAt: actionStartedAt ?? undefined,
+      oneShot: mode === 'panic' && actionStartedAt != null ? true : undefined,
+      vanishesAt, generation: generation ?? 0,
     })),
   }
 }
