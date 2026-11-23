@@ -1,6 +1,7 @@
 import metadata from '../assets/gameplay/atlases.json'
 import { areas, designHeight, designWidth, hidingPose, standingHeight } from '../shared/park.js'
-import { combatPlaybackRate, deathOpacity, oneShotPoses } from '../shared/combat.js'
+import { combatCueFadeMs, combatFeedbackDuration, combatPlaybackRate, deathOpacity, oneShotPoses,
+  npcPenaltyMs, penaltyFadeMs, targetKilledSlideMs } from '../shared/combat.js'
 import { frameAt, hoverOpacity, pickModel } from './parkPicking.js'
 
 const atlasUrls = import.meta.glob('../assets/gameplay/*.webp', { eager: true, import: 'default', query: '?url' })
@@ -11,10 +12,78 @@ const playerShadowColors = ['#ff7096', '#ffd568', '#8cefaf', '#74dfff', '#b69bff
 const narrowSceneWidth = areas[0].width
 const narrowViewport = window.matchMedia('(max-width: 640px)')
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+const feedbackColors = { penalty: '#ff4545', rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff' }
+const penaltyGlowPadding = 22
+const penaltyGlowColor = '#ff1737'
+
+function paintCombatFeedback(ctx, feedback, head, now, width) {
+  const stackSpacing = feedback.some(({ kind }) => kind === 'target-killed') ? 42 : 16
+  let targetLabelTop = null
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = '#000'
+  for (const [index, { kind, text, startedAt }] of feedback.entries()) {
+    const age = Math.max(0, now - startedAt)
+    const duration = combatFeedbackDuration(kind)
+    if (age >= duration) continue
+    const targetKilled = kind === 'target-killed'
+    const lines = targetKilled ? text.split('\n') : [text]
+    const slide = reducedMotion.matches ? 1 : Math.min(1, age / targetKilledSlideMs)
+    const progress = age / duration
+    const lift = reducedMotion.matches ? 0 : 30 * (1 - (1 - progress) ** 2)
+    const top = targetKilled ? head.y + 12 - 56 * slide : head.y - 44 - lift
+    const stack = (feedback.length - index - 1) * stackSpacing
+    const y = Math.max(12, top - stack)
+    if (targetKilled) targetLabelTop = Math.min(targetLabelTop ?? Infinity, y - 15)
+    ctx.font = targetKilled ? '800 18px system-ui, sans-serif' : '800 15px system-ui, sans-serif'
+    ctx.lineWidth = targetKilled ? 10 : 3
+    ctx.globalAlpha = targetKilled ? Math.min(1, (duration - age) / combatCueFadeMs) : 1 - progress
+    ctx.fillStyle = feedbackColors[kind]
+    const inset = Math.max(...lines.map((line) => ctx.measureText(line).width / 2)) + ctx.lineWidth / 2 + 2
+    const x = Math.max(inset, Math.min(width - inset, head.x))
+    for (const [lineIndex, line] of lines.entries()) ctx.strokeText(line, x, y + lineIndex * 23)
+    for (const [lineIndex, line] of lines.entries()) ctx.fillText(line, x, y + lineIndex * 23)
+  }
+  return targetLabelTop
+}
 
 function paintFrame(ctx, atlas, index, x = 0, y = 0) {
   const { width, height, columns, image } = atlas
   ctx.drawImage(image, index % columns * width, Math.floor(index / columns) * height, width, height, x, y, width, height)
+}
+
+function distortScene(ctx, atlas, frame, strength, time) {
+  const { image, width, height, columns } = atlas
+  if (ctx.canvas.width !== width) ctx.canvas.width = width
+  if (ctx.canvas.height !== height) ctx.canvas.height = height
+  const sourceX = frame % columns * width
+  const sourceY = Math.floor(frame / columns) * height
+  const phase = reducedMotion.matches ? 0 : time / 360
+  const rows = 12
+  const margin = 4 * strength
+  for (let row = 0; row < rows; row++) {
+    const top = Math.floor(row * height / rows)
+    const bandHeight = Math.floor((row + 1) * height / rows) - top
+    const offset = 3.5 * strength * Math.sin(phase + row * 0.68)
+    ctx.drawImage(image, sourceX + margin - offset, sourceY + top, width - margin * 2, bandHeight, 0, top, width, bandHeight)
+  }
+}
+
+function createPenaltyOutline(atlas, frame) {
+  const outline = document.createElement('canvas')
+  outline.width = atlas.width + penaltyGlowPadding * 2
+  outline.height = atlas.height + penaltyGlowPadding * 2
+  const ctx = outline.getContext('2d')
+  for (const [x, y] of [[-8, 0], [8, 0], [0, -8], [0, 8], [-6, -6], [6, -6], [-6, 6], [6, 6]]) {
+    paintFrame(ctx, atlas, frame, penaltyGlowPadding + x, penaltyGlowPadding + y)
+  }
+  ctx.globalCompositeOperation = 'source-in'
+  ctx.fillStyle = penaltyGlowColor
+  ctx.fillRect(0, 0, outline.width, outline.height)
+  ctx.globalCompositeOperation = 'destination-out'
+  paintFrame(ctx, atlas, frame, penaltyGlowPadding, penaltyGlowPadding)
+  return outline
 }
 
 function createPlayerShadow() {
@@ -99,6 +168,10 @@ export async function loadParkArt() {
 export function createParkRenderer(canvas, art) {
   const ctx = canvas.getContext('2d')
   const playerShadow = createPlayerShadow()
+  const distortionCtx = document.createElement('canvas').getContext('2d')
+  const grayscaleCtx = document.createElement('canvas').getContext('2d')
+  grayscaleCtx.canvas.width = 160
+  grayscaleCtx.canvas.height = 136
   const sampleCanvas = document.createElement('canvas')
   sampleCanvas.width = 160
   sampleCanvas.height = 136
@@ -108,9 +181,26 @@ export function createParkRenderer(canvas, art) {
   let lastArea = null
   let snapshot = null
   let snapshotReceivedAt = 0
+  let lastServerNow = 0
   let hoveredId = null
   let hoverStartedAt = 0
   const tints = new Map()
+  const penaltyOutlines = new WeakMap()
+
+  function paintPenaltyGlow({ atlas, frame, opacity = 1 }, strength) {
+    let frames = penaltyOutlines.get(atlas)
+    if (!frames) {
+      frames = new Map()
+      penaltyOutlines.set(atlas, frames)
+    }
+    if (!frames.has(frame)) frames.set(frame, createPenaltyOutline(atlas, frame))
+    ctx.save()
+    ctx.globalAlpha = opacity * strength
+    ctx.shadowColor = penaltyGlowColor
+    ctx.shadowBlur = 12
+    ctx.drawImage(frames.get(frame), -80 - penaltyGlowPadding, -footRow - penaltyGlowPadding)
+    ctx.restore()
+  }
 
   function paintPlayerShadow(x, y, radius) {
     const depth = radius * 0.3
@@ -195,7 +285,7 @@ export function createParkRenderer(canvas, art) {
     const ratio = Math.min(2, window.devicePixelRatio || 1)
     const width = Math.round(canvas.clientWidth * ratio)
     const height = Math.round(canvas.clientHeight * ratio)
-    if (width < 1 || height < 1) return { faded: 0, head: null, hoveredId: null, attackId: null }
+    if (width < 1 || height < 1) return { faded: 0, head: null, hoveredId: null, attackId: null, serverNow: state.serverTime }
     if (canvas.width !== width) canvas.width = width
     if (canvas.height !== height) canvas.height = height
     const viewWidth = state.spectating ? area.width : narrowViewport.matches ? narrowSceneWidth : designWidth
@@ -204,11 +294,20 @@ export function createParkRenderer(canvas, art) {
       snapshot = state
       snapshotReceivedAt = time
     }
-    const serverNow = (state.serverTime ?? 0) + Math.max(0, time - snapshotReceivedAt)
+    const serverNow = Math.max(lastServerNow, (state.serverTime ?? 0) + Math.max(0, time - snapshotReceivedAt))
+    lastServerNow = serverNow
+    const penaltyActive = state.penaltyUntil > serverNow
+    const penaltyEnd = state.penaltyUntil ?? state.penaltyFadeAt ?? -Infinity
+    const penaltyStrength = Math.min(1, Math.max(0, (penaltyEnd + penaltyFadeMs - serverNow) / penaltyFadeMs))
+    const penaltyFilter = penaltyStrength ? `grayscale(${penaltyStrength})` : 'none'
+    const penaltyAge = serverNow - (state.penaltyUntil - npcPenaltyMs)
+    const glowStrength = !penaltyActive || reducedMotion.matches ? 1 : 0.6 + 0.4 * Math.cos(2 * Math.PI * penaltyAge / 1000)
 
     ctx.resetTransform()
+    ctx.filter = penaltyFilter
     ctx.fillStyle = '#101728'
     ctx.fillRect(0, 0, width, height)
+    ctx.filter = 'none'
 
     if (lastArea !== state.area) {
       visible.clear()
@@ -264,7 +363,14 @@ export function createParkRenderer(canvas, art) {
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
     const scene = art[area.art]
     const sceneFrame = frameAt(scene, time)
-    paintFrame(ctx, scene, sceneFrame)
+    if (penaltyStrength) {
+      distortScene(distortionCtx, scene, sceneFrame, penaltyStrength, time)
+      ctx.filter = penaltyFilter
+      ctx.drawImage(distortionCtx.canvas, 0, 0)
+      ctx.filter = 'none'
+    } else {
+      paintFrame(ctx, scene, sceneFrame)
+    }
 
     const shadowRadius = 19 * area.modelScale
     const playerShadowRadius = 17 * area.modelScale
@@ -283,6 +389,7 @@ export function createParkRenderer(canvas, art) {
       if (actor.id === playerId) {
         ctx.save()
         ctx.globalAlpha = actor.opacity
+        ctx.filter = penaltyFilter
         paintPlayerShadow(actor.x, actor.y + 3 * area.modelScale, playerShadowRadius)
         ctx.restore()
       }
@@ -290,7 +397,19 @@ export function createParkRenderer(canvas, art) {
       ctx.globalAlpha = actor.opacity
       ctx.translate(actor.x, actor.y)
       ctx.scale(actor.facing * modelScale, modelScale)
-      paintFrame(ctx, actor.atlas, actor.frame, -80, -footRow)
+      if (penaltyActive && actor.id === playerId) {
+        ctx.filter = 'none'
+        paintPenaltyGlow(actor, glowStrength)
+      }
+      if (penaltyStrength && !(penaltyActive && actor.id === playerId)) {
+        // Apply the color filter on a sprite-sized canvas to keep the fade responsive.
+        grayscaleCtx.clearRect(0, 0, 160, 136)
+        grayscaleCtx.filter = penaltyFilter
+        paintFrame(grayscaleCtx, actor.atlas, actor.frame)
+        ctx.drawImage(grayscaleCtx.canvas, -80, -footRow)
+      } else {
+        paintFrame(ctx, actor.atlas, actor.frame, -80, -footRow)
+      }
       if (actor.id === hoveredId) {
         const key = `${actor.color}-${actor.pose}:${actor.frame}`
         if (!tints.has(key)) {
@@ -305,6 +424,7 @@ export function createParkRenderer(canvas, art) {
           tints.set(key, tint)
         }
         ctx.globalAlpha = hoverOpacity(time - hoverStartedAt, reducedMotion.matches)
+        if (penaltyStrength) ctx.filter = penaltyFilter
         ctx.drawImage(tints.get(key), -80, -footRow)
       }
       ctx.restore()
@@ -325,22 +445,32 @@ export function createParkRenderer(canvas, art) {
         ctx.globalAlpha = 0.24
         faded++
       }
-      paintFrame(ctx, scene, sceneFrame)
+      if (penaltyStrength) {
+        ctx.filter = penaltyFilter
+        ctx.drawImage(distortionCtx.canvas, 0, 0)
+      } else {
+        paintFrame(ctx, scene, sceneFrame)
+      }
       ctx.restore()
     })
     if (preview) {
       ctx.save()
       ctx.globalAlpha = 0.6
+      ctx.filter = penaltyFilter
       paintPlayerShadow(preview.x, preview.y + area.modelScale, playerShadowRadius * preview.scale / modelScale)
       ctx.globalAlpha = 0.45
       ctx.translate(preview.x, preview.y)
       ctx.scale(preview.facing * preview.scale, preview.scale)
+      if (penaltyActive) {
+        ctx.filter = 'none'
+        paintPenaltyGlow(preview, glowStrength)
+      }
       paintFrame(ctx, preview.atlas, preview.frame, -80, -footRow)
       ctx.restore()
     }
 
     let head = null
-    if (showPrompt && player) {
+    if (player && (showPrompt || state.combatFeedback?.length)) {
       const atlas = player.atlas ?? art[`${player.color}-idle`]
       const headOffset = silhouette(atlas, player.frame ?? 0).head
       const playerScale = preview?.scale ?? modelScale
@@ -349,6 +479,15 @@ export function createParkRenderer(canvas, art) {
         y: (offsetY + (player.y + headOffset.y * playerScale) * scale) * canvas.clientHeight / height,
       }
     }
-    return { faded, head, hoveredId, attackId }
+    let targetLabelTop = null
+    if (head && state.combatFeedback?.length) {
+      ctx.save()
+      ctx.setTransform(width / canvas.clientWidth, 0, 0, height / canvas.clientHeight, 0, 0)
+      ctx.filter = penaltyFilter
+      targetLabelTop = paintCombatFeedback(ctx, state.combatFeedback, head, serverNow, canvas.clientWidth)
+      ctx.restore()
+    }
+    ctx.filter = 'none'
+    return { faded, head, hoveredId, attackId, serverNow, targetLabelTop, penaltyActive, penaltyStrength }
   }
 }

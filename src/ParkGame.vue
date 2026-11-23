@@ -1,8 +1,10 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { areas } from '../shared/park.js'
-import { killFlashMs } from '../shared/combat.js'
+import { combatCueFadeMs, killFlashMs, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
 import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
+import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
+import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
 import AudioSettings from './AudioSettings.vue'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
 
@@ -23,13 +25,25 @@ const directions = [
   { key: 'KeyD', label: 'Move right', arrow: '→' },
 ]
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
+const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
 const pressed = new Set()
 const pointers = new Map()
 const movement = new Set([...directions.map(({ key }) => key), 'ShiftLeft'])
 const canvas = ref(null)
 const overheadPrompt = ref(null)
+const victimCueElement = ref(null)
 const artReady = ref(false)
+const penaltyActive = ref(false)
+const penaltyStrength = ref(0)
+const stunnedView = ref(false)
+const smudgeWidth = computed(() => stunnedView.value ? 5.5 : 3.2 * penaltyStrength.value)
+const killerCredit = computed(() => {
+  const cue = props.state?.victimCue
+  return cue?.kind === 'killed' && cue.killerName ? `By ${cue.killerName}` : ''
+})
+const respawnCurtain = ref(null)
 const error = ref('')
 const pauseScreen = ref(null)
 const pauseDialog = ref(null)
@@ -56,9 +70,11 @@ const spot = computed(() => area.value?.spots.find(({ id }) => id === props.stat
 const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
 const alive = computed(() => props.state?.life === 'alive')
+const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.life))
 const canAct = computed(() => alive.value && !props.state?.matchEnded && props.state?.mode !== 'combat')
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
+  if (props.state?.victimCue?.kind === 'killed') return null
   if (props.state?.winner) return `${props.state.winner.name} wins!`
   if (props.state?.respawnMs) return `Respawning in ${Math.ceil(props.state.respawnMs / 1000)}s`
   if (props.state?.spectating) return 'Spectating'
@@ -75,10 +91,10 @@ const prompt = computed(() => {
     default: {
       const nearby = spot.value
       if (!nearby) return props.state?.mode === 'action' ? 'Stop action' : null
-      if (nearby.hiding) return `Hide · ${nearby.name}`
-      if (nearby.type.main === 'sitting') return `Sit · ${nearby.name}`
-      if (nearby.type.sub === 'music') return `Dance · ${nearby.name}`
-      return nearby.name
+      if (nearby.hiding) return 'Hide'
+      if (nearby.type.main === 'sitting') return 'Sit'
+      if (nearby.type.sub === 'music') return 'Dance'
+      return 'Inspect'
     }
   }
 })
@@ -324,8 +340,11 @@ async function exitGame() {
 function render(now) {
   if (props.state) {
     const label = overheadPrompt.value
-    const { faded, head, hoveredId } = draw(props.state, now, props.playerId, Boolean(label),
-      pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer)
+    const { faded, head, hoveredId, serverNow, targetLabelTop, penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
+      draw(props.state, now, props.playerId, Boolean(label),
+        pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer)
+    penaltyActive.value = penalized
+    penaltyStrength.value = strength
     fadedForeground = faded
     hoveredActorId = hoveredId
     canvas.value.style.cursor = hoveredId && canAct.value ? 'pointer' : 'default'
@@ -335,11 +354,28 @@ function render(now) {
         canvas.value.clientWidth - label.offsetWidth - inset,
         head.x - label.offsetWidth / 2,
       ))
-      const y = Math.max(inset, head.y - label.offsetHeight - 8)
+      const promptBottom = Math.min(head.y - 8, (targetLabelTop ?? Infinity) - 4)
+      const y = Math.max(inset, promptBottom - label.offsetHeight)
       label.style.transform = `translate3d(${x}px, ${y}px, 0)`
       label.style.visibility = 'visible'
     } else if (label) {
       label.style.visibility = 'hidden'
+    }
+    const cue = props.state.victimCue
+    const fadeAt = cue ? victimCueFadeAt(cue) : 0
+    stunnedView.value = !blackout.value && cue?.kind === 'stunned' && serverNow < fadeAt
+    const cueElement = victimCueElement.value
+    if (cue && cueElement) {
+      const age = Math.max(0, serverNow - cue.startedAt)
+      const frame = reducedMotion.matches ? 2 : Math.min(2, Math.floor(age / 100))
+      const opacity = Math.max(0, Math.min(1, (fadeAt + combatCueFadeMs - serverNow) / combatCueFadeMs))
+      cueElement.style.backgroundPosition = `${frame * 50}% center`
+      cueElement.style.opacity = opacity
+      cueElement.style.visibility = opacity > 0 ? 'visible' : 'hidden'
+    }
+    if (respawnCurtain.value) {
+      const remaining = props.state.respawnedAt + respawnFadeMs - serverNow
+      respawnCurtain.value.style.opacity = blackout.value ? '1' : Math.max(0, Math.min(1, remaining / respawnFadeMs))
     }
   }
   frameId = requestAnimationFrame(render)
@@ -356,7 +392,11 @@ onMounted(async () => {
   }, 80)
 
   try {
-    const art = await loadParkArt()
+    const [art] = await Promise.all([loadParkArt(), ...Object.values(victimCueArt).map((url) => {
+      const image = new Image()
+      image.src = url
+      return image.decode()
+    })])
     if (disposed) return
     purplePortrait.value = art['purple-idle'].image.toDataURL()
     draw = createParkRenderer(canvas.value, art)
@@ -387,6 +427,15 @@ function readState() {
     stamina: stamina.value,
     profile: profile.value,
     score: props.state?.score,
+    combatFeedback: props.state?.combatFeedback,
+    penaltyActive: penaltyActive.value,
+    penaltyStrength: penaltyStrength.value,
+    stunnedView: stunnedView.value,
+    blackout: blackout.value,
+    respawnedAt: props.state?.respawnedAt,
+    penaltyUntil: props.state?.penaltyUntil,
+    penaltyNotices: props.state?.penaltyNotices ?? [],
+    victimCue: props.state?.victimCue,
     target: target.value,
     life: props.state?.life,
     spectating: props.state?.spectating,
@@ -409,7 +458,8 @@ defineExpose({ readState })
 </script>
 
 <template>
-  <main class="park-game">
+  <main class="park-game" :class="{ 'park-penalized': penaltyStrength > 0, 'park-pov-stunned': stunnedView }"
+    :style="{ '--penalty-grayscale': penaltyStrength }">
     <header class="park-hud">
       <div class="park-profile">
         <div class="park-profile-track" role="meter" aria-labelledby="park-profile-label"
@@ -442,14 +492,26 @@ defineExpose({ readState })
     </header>
 
     <div class="park-stage">
+      <svg class="park-effect-defs" width="0" height="0" aria-hidden="true" focusable="false">
+        <defs>
+          <filter id="park-pov-smudge" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+            <feGaussianBlur :stdDeviation="`${smudgeWidth} 0`" edgeMode="duplicate" />
+          </filter>
+        </defs>
+      </svg>
       <canvas ref="canvas" tabindex="0" :aria-label="'Park · ' + (area?.name ?? 'loading')"
         @pointermove="hover" @pointerleave="clearHover" @pointercancel="clearHover" @click="attack" />
+      <aside v-if="!penaltyActive && state?.penaltyNotices?.length" class="park-penalty-feed" aria-label="NPC penalties">
+        <ul role="log">
+          <li v-for="notice in state.penaltyNotices" :key="notice.id">{{ notice.name }} at {{ areas[notice.area].name }}</li>
+        </ul>
+      </aside>
       <p v-if="error || reconnecting || !state || !artReady" class="park-notice" role="status">
         {{ error || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
       </p>
-      <p v-if="state?.killAward" class="park-notice park-kill-award" role="status">
-        {{ state.killAward.rating }} +{{ state.killAward.points }}
-      </p>
+      <div class="park-feedback-status" role="status" aria-atomic="false" aria-relevant="additions">
+        <span v-for="feedback in state?.combatFeedback" :key="feedback.startedAt">{{ feedback.text }}</span>
+      </div>
       <section v-if="inspecting" ref="focusPanel" class="park-panel" tabindex="-1" :aria-label="spot.name">
         <h2>{{ spot.name }}</h2>
         <p>{{ spot.effect }}</p>
@@ -533,6 +595,14 @@ defineExpose({ readState })
 
     <div v-if="state?.killFlashAt != null && !reconnecting" :key="state.killFlashAt"
       class="park-kill-flash" :style="{ '--flash-duration': `${killFlashMs}ms` }" aria-hidden="true"></div>
+    <div v-if="blackout || state?.respawnedAt != null" ref="respawnCurtain" class="park-blackout" aria-hidden="true"></div>
+    <div v-if="state?.victimCue" :key="state.victimCue.startedAt" ref="victimCueElement"
+      class="park-victim-cue" :style="{ backgroundImage: `url(${victimCueArt[state.victimCue.kind]})` }">
+      <span class="park-feedback-status" role="status">{{ state.victimCue.kind === 'killed' ? 'Killed' : 'Stunned' }}</span>
+      <p v-if="killerCredit" class="park-killer-credit">
+        {{ killerCredit }}<span aria-hidden="true">{{ killerCredit }}</span>
+      </p>
+    </div>
   </main>
 </template>
 
@@ -547,9 +617,10 @@ defineExpose({ readState })
 }
 
 .park-hud {
+  --park-profile-width: 124px;
   display: grid;
   grid-template-areas: "profile area stamina pause target";
-  grid-template-columns: minmax(100px, 1fr) auto minmax(70px, 170px) auto minmax(120px, 1fr);
+  grid-template-columns: minmax(var(--park-profile-width), 1fr) auto minmax(70px, 170px) auto minmax(120px, 1fr);
   align-items: center;
   gap: clamp(8px, 3vw, 28px);
   padding: 10px clamp(10px, 3vw, 34px);
@@ -602,7 +673,7 @@ defineExpose({ readState })
   grid-area: profile;
   display: grid;
   gap: 4px;
-  width: 100px;
+  width: var(--park-profile-width);
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -616,10 +687,16 @@ defineExpose({ readState })
 }
 
 .park-profile-label {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 6ch;
   gap: 4px;
   font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.park-profile-label > :last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .park-profile-segment {
@@ -692,7 +769,7 @@ defineExpose({ readState })
 @media (max-width: 640px) {
   .park-hud {
     grid-template-areas: "profile target target" "area stamina pause";
-    grid-template-columns: 100px minmax(0, 1fr) auto;
+    grid-template-columns: var(--park-profile-width) minmax(0, 1fr) auto;
     gap: 8px;
     padding-block: 8px;
   }
@@ -723,6 +800,65 @@ defineExpose({ readState })
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+.park-game.park-penalized {
+  background: color-mix(in srgb, #171717 calc(var(--penalty-grayscale) * 100%), #101728);
+}
+
+.park-penalized > :not(.park-stage, .park-victim-cue),
+.park-penalized .park-stage > :not(canvas),
+.park-penalized dialog::backdrop {
+  filter: grayscale(var(--penalty-grayscale));
+}
+
+.park-effect-defs {
+  position: absolute;
+  pointer-events: none;
+}
+
+.park-pov-stunned .park-stage canvas {
+  filter: blur(6px) url(#park-pov-smudge);
+}
+
+.park-penalized:not(.park-pov-stunned) .park-stage canvas {
+  filter: blur(calc(1.3px * var(--penalty-grayscale))) url(#park-pov-smudge);
+}
+
+.park-blackout {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  background: #000;
+  pointer-events: none;
+}
+
+.park-penalty-feed {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+
+.park-penalty-feed ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.park-penalty-feed li {
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid #ffdfba65;
+  border-radius: 8px;
+  background: #251e25ec;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .park-lifecycle {
@@ -770,6 +906,47 @@ defineExpose({ readState })
   animation: park-kill-flash var(--flash-duration) ease-out both;
 }
 
+.park-victim-cue {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  width: min(60vw, 48dvh, 320px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.park-killer-credit {
+  position: absolute;
+  top: 98%;
+  left: 50%;
+  width: max-content;
+  max-width: 88vw;
+  margin: 0;
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: clamp(1.125rem, 3.6vw, 1.75rem);
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-align: center;
+  -webkit-text-stroke: 5px #303038;
+  paint-order: stroke fill;
+}
+
+.park-killer-credit span {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  background: linear-gradient(#d5d5d5, #fff 48%);
+  background-clip: text;
+  -webkit-text-stroke: 0;
+}
+
 @keyframes park-kill-flash {
   0% { opacity: 0.85; }
   100% { opacity: 0; }
@@ -807,12 +984,12 @@ defineExpose({ readState })
   font-size: 0.875rem;
 }
 
-.park-kill-award {
-  top: auto;
-  left: auto;
-  right: 12px;
-  bottom: 12px;
-  transform: none;
+.park-feedback-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   pointer-events: none;
 }
 

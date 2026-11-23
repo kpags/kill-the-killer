@@ -8,6 +8,27 @@ export const stunMs = 3000
 export const screamPoses = ['scream-one', 'scream-two', 'scream-three']
 export const oneShotPoses = new Set(['kill', 'punch', 'death', 'pre-stun'])
 export const killFlashMs = 420
+export const combatFeedbackMs = 1200
+export const npcPenaltyMs = 10_000
+export const penaltyFadeMs = 500
+export const respawnFadeMs = 500
+export const penaltyNoticeLimit = 3
+export const combatCueFadeMs = 300
+export const targetKilledSlideMs = 500
+export const targetKilledHoldMs = 2000
+export const victimCueHoldMs = { killed: 3000, stunned: 1500 }
+
+export function combatFeedbackDuration(kind) {
+  return kind === 'target-killed' ? targetKilledSlideMs + targetKilledHoldMs + combatCueFadeMs : combatFeedbackMs
+}
+
+export function victimCueFadeAt({ kind, startedAt, holdUntil }) {
+  return holdUntil ?? startedAt + victimCueHoldMs[kind]
+}
+
+export function victimCueEndsAt(cue) {
+  return victimCueFadeAt(cue) + combatCueFadeMs
+}
 
 export function combatPlaybackRate(pose) {
   return pose === 'kill' || pose === 'death' ? 1.3 : 1

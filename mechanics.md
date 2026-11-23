@@ -10,7 +10,7 @@
 - Players can blend in with the crowd or use hiding spots to stalk or surprise their target.
 - A player can stun their assigned killer for three seconds. The stunned player keeps their current target, and all target assignments stay in place.
 - After a player kills their assigned target, assign them a new target if the match is still active. Keep assignments one-to-one among surviving players.
-- Eliminated players become spectators. Spectators can switch areas to observe and receive no live player-location indicators. They can see a player in the area they are watching when that player kills or makes a suspicious move.
+- Eliminated players become spectators and can switch areas. They see all visible players and NPCs in the watched area, with the same rendering for each. Players inside hiding spots remain private.
 - When two players remain, they are each other's target. The first to eliminate the other wins.
 
 ### Hitman
@@ -18,8 +18,8 @@
 **Objective.** Earn the highest score in an eight-minute match.
 
 - Each player has an assigned target. Several killers can be assigned the same target and race to eliminate them first. A player who kills their assigned target receives a new one.
-- Eliminated players respawn five seconds after the lethal click. Randomly select an area and a valid position inside its green playable boundary, then return control in the idle pose.
-- A player can stun their assigned killer or killers for three seconds. In Hitman, a stunned killer receives a different living target when one is available. Brief punches from unrelated players preserve target assignments.
+- Eliminated players respawn five seconds after the lethal click. The view stays black until respawn, then fades in over 0.5 seconds. Respawn selects a random area and a valid position inside its green playable boundary, then returns control in the idle pose.
+- A player can stun their assigned killer or killers for three seconds. A hunter who is stunned by their own assigned target receives a different living target when one is available. Other punches preserve target assignments.
 - Each player has a three-bar Profile meter. More filled bars mean a lower profile, and lower-profile target kills award more points. The player with the highest score when time expires wins.
 
 | Kill rating | Profile meter | Points |
@@ -49,11 +49,13 @@ The HUD shows a 100 × 15 px meter at the upper left, with dark blue, blue, and 
 | Walking away from walking NPCs or a crowd of NPCs | −1 |
 | Entering or leaving a hiding area | −5 |
 
-A successful stun against an assigned killer immediately deducts 10 Profile points. Killing an NPC immediately deducts 20. Hitman scores assigned-target kills using the killer's Profile before reassignment resets the meter. The HUD shows the running score and briefly displays the rating and points from each scored kill.
+A successful nonlethal punch or stun immediately deducts 10 Profile points from the attacker, down to zero. Killing an NPC immediately deducts 20. Hitman scores assigned-target kills using the killer's Profile before reassignment resets the meter. The HUD shows the running score and briefly displays the rating from each scored kill.
 
 ### NPC rules for both modes
 
-- Killing an NPC exposes the killer's location for 10 seconds.
+- Each NPC kill starts or refreshes a 10-second penalty. The penalized view is grayscale with slight blur, horizontal smearing, and distortion. The player's stickman retains its color and has a thick, pulsing red glow. At expiry, the glow stops and the grayscale, blur, smearing, and distortion fade over 0.5 seconds. With reduced motion, the glow and distortion stay steady.
+- Unpenalized players and spectators see **PlayerName at AreaName** in the upper-left of the play area. Each NPC kill adds a notice that follows the player's current area and expires 10 seconds after that kill. The fourth active notice drops the oldest without clearing the associated player's personal penalty.
+- A penalty follows the player through area changes, reconnects, and Hitman respawns. While waiting to respawn, notices show the previous area. Leaving the room removes that player's notices.
 - Killed NPCs respawn and may use the same model or a different one.
 
 ## Stamina
@@ -132,7 +134,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Speaker interactions loop all three dance clips in order until the player stops. Fountain's center bench fades when a model overlaps its wavy guide outline.
 - Press **F** or tap **Actions** to open the six-slot wheel. **Phone**, **Talk**, **Dance**, and **Scream** each loop a randomly chosen clip until the player moves, interacts, chooses another action, or enters combat.
 - The bottom of the seated model's hips rests on the orange guide box's bottom edge, with the legs extending naturally below. The map's `seat_slots` value sets the combined capacity for players and NPCs. Each occupant takes the nearest available slot. A sitting interaction with no `seat_slots` value defaults to one slot.
-- Nearby interaction prompts appear above the local player's head with **E** on keyboard layouts or **Interact** on touch layouts. While hidden, the exit prompt and countdown appear above the player's hiding position.
+- Nearby interaction prompts show **Sit**, **Hide**, **Dance**, or **Inspect** above the local player's head, with **E** on keyboard layouts or **Interact** on touch layouts. While hidden, the exit prompt and countdown appear above the player's hiding position. The inspection panel displays the interaction's name and details.
 - Park artwork uses the supplied animated templates. Stickmen have transparent backgrounds and soft ground shadows. The default standing height is 83 map pixels. An area's `model_scale` multiplies that height and scales other poses with it. Carpark uses `0.8`, for a standing height of about 66 map pixels.
 - Each player sees a small rainbow shadow under their own stickman's feet, including their translucent hiding preview.
 - Park starts the Profile Meter at 33% and applies the behavior rates for movement, NPC proximity, seating, dancing, and hiding transitions. The proximity radius is 36 map pixels at default model scale. Entering and leaving hiding each apply the −5 rate for one second. Last Man Standing uses a shuffled, one-to-one target cycle among surviving players. Hitman allows multiple killers to share a target. A solo session without bots has no target.
@@ -153,17 +155,27 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
 - NPCs, assigned targets, and any seated player can be killed. Range for seated models uses the nearest walkable point to their seat. The attacker plays the updated `kill.gif` once at 1.3× speed (about 208ms). The victim plays `death.gif` once at 1.3× speed (about 346ms) in the direction they were facing when hit. The corpse then fades out over two seconds. A lethal attack also takes priority when both players have each other as targets.
 - Killing an NPC or assigned target briefly flashes red around the killer's screen edges.
+- NPC kills show red **Penalty**, Hitman target kills show the white kill rating, and successful stuns and punches show yellow **Stunned**. These outlined labels rise and fade above the acting player's model over 1.2 seconds and are visible only to that player.
+- In Last Man Standing, an assigned-target kill shows the attacker **Target** and **Killed** on two lines in white with a 5 px black outline. The label rises from the model in 0.5 seconds, holds above it for 2 seconds, and fades over 0.3 seconds.
+- Both modes show a private centered **Killed** animation to the victim of an assigned-target kill, with **By PlayerName** beneath it. The view stays black behind it until spectating in Last Man Standing or until the respawn fade begins in Hitman.
+- Both modes blur and horizontally smear the victim's view while the centered **Stunned** animation stays sharp during a defensive stun, from the initial punch through the end of the stun lock. In Last Man Standing, unrelated punches show the same cue and view effect for 1.5 seconds. These overlays play three frames once at 100 ms per frame, then hold the last frame. **Killed** begins fading after 3 seconds. **Stunned** begins fading when the blur ends. Both fade over 0.3 seconds. Reduced motion shows the final overlay frame immediately.
 - Clicking an assigned killer on their feet plays `punch.gif` once on the attacker and `pre-stun.gif` once (450ms) on the victim, followed by three seconds of looping `stun.gif`. In Last Man Standing, targets stay unchanged. In Hitman, the stunned killer receives a different living target when one is available.
 - Clicking an unrelated player on their feet plays punch and pre-stun only, returning both players to idle after 450ms. Neither player's target assignment changes. Repeat punches cannot extend a stun. An assigned killer can still kill a stunned target.
 - Combat interrupts seats, dancing, inspecting, and hiding, releases seats, and blocks movement and interaction until the sequence ends. Attacking from hiding reveals the attacker. Hidden opponents cannot be selected. Room bots participate as players, while crowd and walking NPCs are always lethal targets.
 - A killed player immediately stops acting and leaves active targeting. Last Man Standing repairs the surviving target cycle. Hitman replaces unavailable targets. Receiving an actual new target resets Profile to 0%; a respawn instead starts at 33% Profile and 100 stamina.
-- After their corpse disappears, eliminated Last Man Standing players can select a spectator area. They receive NPCs, corpses, and players who are sprinting or performing combat animations; ordinary living players and hidden opponents are omitted from their view. Spectators cannot move, interact, or attack.
+- Eliminated Last Man Standing players can select a spectator area after their corpse disappears and any **Killed** overlay finishes fading. They see all models visible in that area without player markers and can switch areas to observe.
 - Last Man Standing stops combat when one player remains, then displays the winner after pending player deaths finish fading. Solo exploration does not end automatically. Pause and Exit remain available.
 - Hitman counts its five-second respawn delay from the lethal click, including death and fading. Respawn selects a random area and a position within its green playable boundary; it does not use a side-entry animation.
 - Killed crowd NPCs and walkers disappear after their fade. Their replacements join the returning NPCs and reuse the original crowd or walker slots.
-- The eight-minute timer, combat stamina deductions, and the NPC location-exposure penalty described above remain pending.
+- The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-23 — Added the ten-second NPC-kill penalty and three-notice feed, expanded spectator visibility, and applied the Profile cost to all successful nonlethal punches.
+
+- 2026-11-23 — Added Last Man Standing's two-line target kill label and private Killed and Stunned animations with a timed spectator handoff.
+
+- 2026-11-23 — Kept the Profile Meter label on one line, moved combat feedback above the acting player, and shortened nearby prompts to action names.
 
 - 2026-11-22 — Added nearby-model hover tinting, synchronized kills and punches, mode-specific stuns and targeting, death fading, NPC replacement, Hitman respawns within green boundaries, restricted spectating, and the Last Man Standing winner state.
 

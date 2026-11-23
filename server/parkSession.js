@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto'
 import { areas, colors, constrain, nearbySpot, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
-import { isLiving, killFlashMs } from '../shared/combat.js'
+import { combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 
@@ -54,6 +54,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
   }
   const game = {
     players: roster, targetOrder, targets: new Map(), modeId,
+    penaltyNotices: [], penaltySequence: 0,
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
@@ -246,7 +247,13 @@ export function parkView(game, playerId, now) {
   const target = game.players.get(game.targets.get(playerId))
   const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
   const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
-  const restricted = !isLiving(actor) && game.modeId === 'last_man_standing'
+  const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
+  const penaltyUntil = actor.penaltyUntil > now ? actor.penaltyUntil : undefined
+  const penaltyNotices = penaltyUntil ? [] : game.penaltyNotices.flatMap(({ id, playerId, expiresAt }) => {
+    const penalized = game.players.get(playerId)
+    if (!penalized || expiresAt <= now) return []
+    return [{ id, name: penalized.name, area: penalized.area, expiresAt }]
+  })
   const actors = [...game.players.values(), ...game.npcs.values()]
     .filter((other) => other.area === area
       && (isLiving(other) || (other.life === 'dying' && now < other.vanishesAt))
@@ -256,16 +263,23 @@ export function parkView(game, playerId, now) {
   return {
     area,
     serverTime: now,
+    penaltyUntil,
+    penaltyFadeAt: !penaltyUntil && actor.penaltyUntil + penaltyFadeMs > now ? actor.penaltyUntil : undefined,
+    penaltyNotices,
     killFlashAt: actor.killFlashAt != null && now - actor.killFlashAt < killFlashMs ? actor.killFlashAt : undefined,
     life: actor.life,
     spectating,
     respawnMs: actor.respawnAt ? Math.ceil(Math.max(0, actor.respawnAt - now)) : 0,
+    respawnedAt: actor.life === 'alive' && actor.respawnedAt + respawnFadeMs > now ? actor.respawnedAt : undefined,
     matchEnded: Boolean(game.winner),
     winner: game.winner && now >= game.winnerAt ? game.winner : null,
     stamina: Math.round(actor.stamina * 10) / 10,
     profile: actor.profile,
     score: game.modeId === 'Hitman' ? actor.score : undefined,
-    killAward: actor.killAward && now < actor.killAward.until ? actor.killAward : undefined,
+    victimCue: actor.victimCue && now < victimCueEndsAt(actor.victimCue) ? actor.victimCue : undefined,
+    combatFeedback: actors.includes(actor) ? actor.combatFeedback
+      ?.filter(({ area: eventArea, kind, startedAt }) => eventArea === area && now - startedAt < combatFeedbackDuration(kind))
+      .map(({ kind, text, startedAt }) => ({ kind, text, startedAt })) : undefined,
     target: target ? { name: target.name, color: target.color } : null,
     mode: actor.mode,
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
