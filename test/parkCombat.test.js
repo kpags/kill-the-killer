@@ -22,6 +22,22 @@ function emptyGame(mode = 'last_man_standing', count = 4) {
   return game
 }
 
+test('the player list shares match scores or eliminations across areas without actor details', () => {
+  for (const mode of ['last_man_standing', 'Hitman']) {
+    const game = emptyGame(mode, 3)
+    Object.assign(game.players.get('2'), { area: 3, mode: 'hide', isBot: true })
+    const observerView = parkView(game, '2', 0)
+    assert.ok(observerView.actors.every(({ id }) => id !== '0'))
+    assert.equal(observerView.playerList.length, 3)
+    assert.equal(attackInPark(game, '0', '1', 10), undefined)
+
+    const expected = mode === 'Hitman'
+      ? [{ name: 'Player 1', score: 100 }, { name: 'Player 2', score: 0 }, { name: 'Player 3', score: 0 }]
+      : [{ name: 'Player 1', eliminated: false }, { name: 'Player 2', eliminated: true }, { name: 'Player 3', eliminated: false }]
+    for (const id of game.players.keys()) assert.deepEqual(parkView(game, id, 10).playerList, expected)
+  }
+})
+
 test('combat queues only accepted kill and stun sounds at the corresponding phase', () => {
   for (const mode of ['last_man_standing', 'Hitman']) {
     for (const [victim, impact, full] of [

@@ -47,6 +47,7 @@ const respawnCurtain = ref(null)
 const error = ref('')
 const pauseScreen = ref(null)
 const pauseDialog = ref(null)
+const playerListOpen = ref(false)
 const actionsOpen = ref(false)
 const actionsDialog = ref(null)
 const resumeButton = ref(null)
@@ -124,6 +125,11 @@ function release() {
   releaseMovement()
 }
 
+function clearHeldControls() {
+  playerListOpen.value = false
+  release()
+}
+
 function releaseMovement() {
   pressed.clear()
   pointers.clear()
@@ -159,7 +165,7 @@ function toggleActions() {
   }
   if (!canAct.value || !artReady.value || props.reconnecting || pauseScreen.value) return
   actionsOpen.value = true
-  release()
+  clearHeldControls()
   actionsDialog.value.showModal()
 }
 
@@ -233,6 +239,12 @@ function keyDown(event) {
     return
   }
   if (pauseScreen.value) return
+  if (event.code === 'Tab' && !actionsOpen.value && props.state && !props.reconnecting
+    && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault()
+    if (!event.repeat) playerListOpen.value = true
+    return
+  }
   if (event.code === 'KeyF') {
     event.preventDefault()
     if (!event.repeat) toggleActions()
@@ -251,6 +263,10 @@ function keyDown(event) {
 }
 
 function keyUp(event) {
+  if (event.code === 'Tab') {
+    playerListOpen.value = false
+    return
+  }
   if (!pressed.delete(event.code)) return
   event.preventDefault()
   transmit()
@@ -280,7 +296,7 @@ watch(inspecting, (value, previous) => {
 watch(() => props.reconnecting, (value) => {
   if (value) {
     closeActions()
-    release()
+    clearHeldControls()
   }
 })
 watch(canAct, (value) => { if (!value) closeActions() })
@@ -292,7 +308,7 @@ async function openPause() {
   closeActions()
   pauseScreen.value = 'pause'
   error.value = ''
-  release()
+  clearHeldControls()
   pauseDialog.value.showModal()
   await nextTick()
   resumeButton.value?.focus()
@@ -385,8 +401,8 @@ onMounted(async () => {
   refocus()
   window.addEventListener('keydown', keyDown)
   window.addEventListener('keyup', keyUp)
-  window.addEventListener('blur', release)
-  document.addEventListener('visibilitychange', release)
+  window.addEventListener('blur', clearHeldControls)
+  document.addEventListener('visibilitychange', clearHeldControls)
   repeatInput = window.setInterval(() => {
     if (pressed.size || pointers.size) transmit()
   }, 80)
@@ -414,8 +430,8 @@ onUnmounted(() => {
   window.clearInterval(repeatInput)
   window.removeEventListener('keydown', keyDown)
   window.removeEventListener('keyup', keyUp)
-  window.removeEventListener('blur', release)
-  document.removeEventListener('visibilitychange', release)
+  window.removeEventListener('blur', clearHeldControls)
+  document.removeEventListener('visibilitychange', clearHeldControls)
 })
 
 function readState() {
@@ -427,6 +443,7 @@ function readState() {
     stamina: stamina.value,
     profile: profile.value,
     score: props.state?.score,
+    playerList: playerListOpen.value ? props.state?.playerList ?? [] : null,
     combatFeedback: props.state?.combatFeedback,
     penaltyActive: penaltyActive.value,
     penaltyStrength: penaltyStrength.value,
@@ -578,6 +595,24 @@ defineExpose({ readState })
         </template>
         <button type="button" class="park-action-center" aria-label="Close Actions" @click="closeActions">Actions</button>
       </div>
+    </dialog>
+
+    <dialog v-if="playerListOpen" open class="park-player-list" aria-labelledby="park-player-list-title">
+      <h2 id="park-player-list-title">Players</h2>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">{{ state.score == null ? 'Status' : 'Score' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(player, index) in state.playerList" :key="index" :class="{ eliminated: player.eliminated }">
+            <th scope="row">{{ player.name }}</th>
+            <td>{{ player.score ?? (player.eliminated ? 'Eliminated' : 'Alive') }}</td>
+          </tr>
+        </tbody>
+      </table>
     </dialog>
 
     <dialog ref="pauseDialog" class="park-pause-dialog" :aria-label="pauseScreen === 'settings' ? 'Settings' : 'Pause menu'"
@@ -1118,6 +1153,57 @@ defineExpose({ readState })
 .park-action-center:focus-visible {
   outline: 2px solid #ffc15c;
   outline-offset: 2px;
+}
+
+.park-player-list {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  width: min(calc(100% - 28px), 22rem);
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: clamp(12px, 3vmin, 20px);
+  border: 1px solid #ffdfba80;
+  border-radius: 20px;
+  background: #251e25e8;
+  color: inherit;
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 #fff4e459, 0 12px 38px #08090d80;
+  pointer-events: none;
+}
+
+.park-player-list h2 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+.park-player-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.park-player-list th,
+.park-player-list td {
+  padding: 6px 4px;
+}
+
+.park-player-list thead {
+  color: #e5ccbe;
+}
+
+.park-player-list tbody tr {
+  border-top: 1px solid #ffdfba35;
+}
+
+.park-player-list tbody tr.eliminated {
+  color: #b5aeb7;
+}
+
+.park-player-list :is(th, td):last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .park-pause-dialog {

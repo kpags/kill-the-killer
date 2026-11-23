@@ -246,6 +246,7 @@ export function parkView(game, playerId, now) {
   const actor = game.players.get(playerId)
   refreshParkTargets(game)
   const target = game.players.get(game.targets.get(playerId))
+  const hitman = game.modeId === 'Hitman'
   const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
   const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
   const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
@@ -276,7 +277,10 @@ export function parkView(game, playerId, now) {
     winner: game.winner && now >= game.winnerAt ? game.winner : null,
     stamina: Math.round(actor.stamina * 10) / 10,
     profile: actor.profile,
-    score: game.modeId === 'Hitman' ? actor.score : undefined,
+    score: hitman ? actor.score : undefined,
+    playerList: [...game.players.values()].map((player) => hitman
+      ? { name: player.name, score: player.score }
+      : { name: player.name, eliminated: !isLiving(player) }),
     victimCue: actor.victimCue && now < victimCueEndsAt(actor.victimCue) ? actor.victimCue : undefined,
     combatFeedback: actors.includes(actor) ? actor.combatFeedback
       ?.filter(({ area: eventArea, kind, startedAt }) => eventArea === area && now - startedAt < combatFeedbackDuration(kind))

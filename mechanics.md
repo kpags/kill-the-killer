@@ -81,7 +81,7 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 | Mouse | Mouse movement | Move the pointer |
 | Mouse | Left click | Kill or stun |
 | Menu | `P` or **Pause** | Open the pause menu |
-| Menu | `Tab` | Show the player list. In Hitman, show each player's score. In Last Man Standing, grey out eliminated players. |
+| Menu | Hold `Tab` | Open the player list dialog while held. Release to close it. In Hitman, show each player's score. In Last Man Standing, grey out eliminated players. |
 
 ## Map assets
 
@@ -173,6 +173,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-23 — Added the hold-to-view player list dialog with live scores in Hitman and elimination status in Last Man Standing.
 
 - 2026-11-23 — Added shuffled Playground music and shared combat sounds for kills, quick stuns, and full stuns.
 
