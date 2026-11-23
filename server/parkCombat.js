@@ -7,6 +7,12 @@ import { queueNpcPanic } from './parkNpcs.js'
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const pick = (values, random) => values[Math.floor(random() * values.length)] ?? null
 
+function queueSound(game, area, kind) {
+  const sounds = game.soundEvents.get(area) ?? []
+  sounds.push({ kind, variant: Math.random() })
+  game.soundEvents.set(area, sounds)
+}
+
 function addCombatFeedback(actor, kind, text, now) {
   const feedback = (actor.combatFeedback ?? []).filter(({ kind, startedAt }) => now - startedAt < combatFeedbackDuration(kind))
   feedback.push({ kind, text, startedAt: now, area: actor.area })
@@ -107,7 +113,10 @@ export function attackInPark(game, playerId, actorId, now) {
       respawnAt: !isNpc && game.modeId === 'Hitman' ? now + respawnDelayMs : null,
       victimCue: isTarget && !victim.isBot ? { kind: 'killed', startedAt: now, killerName: actor.name } : null,
     })
-    if (isNpc || isTarget) actor.killFlashAt = now
+    if (isNpc || isTarget) {
+      actor.killFlashAt = now
+      queueSound(game, actor.area, 'kill')
+    }
     if (isNpc) {
       adjustProfile(actor, -20)
       applyNpcPenalty(game, actor, now)
@@ -126,6 +135,8 @@ export function attackInPark(game, playerId, actorId, now) {
   } else {
     victim.facing = -actor.facing
     beginCombat(victim, 'pre-stun', now, { stun: defensiveStun })
+    queueSound(game, actor.area, 'pre-stun')
+    if (!defensiveStun) queueSound(game, actor.area, 'quick-stun')
     if (!victim.isBot && (lastManStanding || defensiveStun)) {
       victim.victimCue = { kind: 'stunned', startedAt: now }
       if (defensiveStun) victim.victimCue.holdUntil = victim.combat.endsAt + stunMs
@@ -174,7 +185,10 @@ export function advanceParkCombat(game, now) {
     if (actor.pose === 'pre-stun' && actor.combat.stun) {
       actor.pose = 'stun'
       actor.combat = { startedAt: actor.combat.endsAt, endsAt: actor.combat.endsAt + stunMs }
-      if (now < actor.combat.endsAt) continue
+      if (now < actor.combat.endsAt) {
+        queueSound(game, actor.area, 'full-stun')
+        continue
+      }
     }
     finishCombat(actor)
   }

@@ -71,9 +71,13 @@ export function createLobbyServer({
   function broadcastPark(room, now = performance.now()) {
     for (const player of room.slots) {
       if (player?.socket && player.socket.bufferedAmount < 32_768) {
-        send(player.socket, { type: 'park', state: parkView(room.game, player.id, now) })
+        const state = parkView(room.game, player.id, now)
+        const sounds = room.game.soundEvents.get(state.area)
+        send(player.socket, { type: 'park', state })
+        if (sounds) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
       }
     }
+    room.game.soundEvents.clear()
   }
 
   function detach(player) {

@@ -55,6 +55,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
   const game = {
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
+    soundEvents: new Map(),
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }

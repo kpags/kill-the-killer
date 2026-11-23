@@ -5,7 +5,7 @@ import RoomLobby from './RoomLobby.vue'
 import ParkGame from './ParkGame.vue'
 import AudioSettings from './AudioSettings.vue'
 import { createRoomConnection } from './roomConnection.js'
-import { useMenuAudio } from './menuAudio.js'
+import { useGameAudio } from './menuAudio.js'
 
 const actions = ['Play', 'Join Room', 'Settings']
 const audioStorageKey = 'kill-the-killer-audio-settings'
@@ -44,9 +44,11 @@ watch(audioSettings, (levels) => {
 const connection = createRoomConnection(async (reason) => {
   homeError.value = reason
   await focusPlay()
-})
+}, (sounds) => playCombatSounds(sounds))
 const { room, playerId, park, reconnecting } = connection
-useMenuAudio(audioSettings, computed(() => room.value?.phase !== 'park'))
+const menuActive = computed(() => room.value?.phase !== 'park')
+const playCombatSounds = useGameAudio(audioSettings, menuActive,
+  computed(() => menuActive.value ? null : park.value?.area))
 
 watch(room, (value, previous) => {
   if (value && !previous) lobby.value?.focusHeading()

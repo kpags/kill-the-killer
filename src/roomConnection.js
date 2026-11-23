@@ -16,7 +16,7 @@ function saveSession(token) {
   }
 }
 
-export function createRoomConnection(onRoomClosed) {
+export function createRoomConnection(onRoomClosed, onParkSounds) {
   const room = ref(null)
   const playerId = ref(null)
   const park = ref(null)
@@ -58,6 +58,10 @@ export function createRoomConnection(onRoomClosed) {
     }
     if (message.type === 'park' && token) {
       park.value = message.state
+      return
+    }
+    if (message.type === 'park_sounds' && token) {
+      if (room.value?.phase === 'park' && park.value?.area === message.area) onParkSounds(message.sounds)
       return
     }
     if (message.type !== 'result') return

@@ -141,6 +141,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The pause menu blocks local movement and interaction while the multiplayer session continues. **Resume** returns to gameplay, **Settings** opens the audio controls, and **Exit** leaves the room. When the host exits, the room closes for everyone.
 - Home Settings and the pause menu share **SFX** and **Music** sliders. Both default to 20%, and the browser saves the player's choices.
 - Buttons on Home, Home Settings, and Room play hover and click sounds after the first menu interaction. Menu music continuously shuffles the three tracks and follows the Music slider. It pauses in Park and resumes when the player returns to a menu.
+- Playground shuffles and loops its own music through the **Music** slider. Music starts fresh on each visit, continues during the pause menu, and stops when the player leaves Playground. Spectators hear the music of the area they watch.
 
 ### Park NPCs
 
@@ -156,6 +157,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
 - NPCs, assigned targets, and any seated player can be killed. Range for seated models uses the nearest walkable point to their seat. The attacker plays the updated `kill.gif` once at 1.3× speed (about 208ms). The victim plays `death.gif` once at 1.3× speed (about 346ms) in the direction they were facing when hit. The corpse then fades out over two seconds. A lethal attack also takes priority when both players have each other as targets.
 - Killing an NPC or assigned target briefly flashes red around the killer's screen edges.
+- NPC and assigned-target kills play a random `kill` sound. A full stun plays a random `pre_stun` sound on impact and a random `full_stun` sound 0.45 seconds later, when the stun begins. A quick stun plays random `pre_stun` and `quick_stun` sounds together on impact. The **SFX** slider controls these sounds, and players and spectators in the same area hear the same selected clips.
 - NPC kills show red **Penalty**, Hitman target kills show the white kill rating, and successful stuns and punches show yellow **Stunned**. These outlined labels rise and fade above the acting player's model over 1.2 seconds and are visible only to that player.
 - In Last Man Standing, an assigned-target kill shows the attacker **Target** and **Killed** on two lines in white with a 5 px black outline. The label rises from the model in 0.5 seconds, holds above it for 2 seconds, and fades over 0.3 seconds.
 - Both modes show a private centered **Killed** animation to the victim of an assigned-target kill, with **By PlayerName** beneath it. The view stays black behind it until spectating in Last Man Standing or until the respawn fade begins in Hitman.
@@ -171,6 +173,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-23 — Added shuffled Playground music and shared combat sounds for kills, quick stuns, and full stuns.
 
 - 2026-11-23 — Added the ten-second NPC-kill penalty and three-notice feed, expanded spectator visibility, and applied the Profile cost to all successful nonlethal punches.
 

@@ -1,24 +1,45 @@
 import { onMounted, onUnmounted, watch } from 'vue'
+import { areas } from '../shared/park.js'
 import clickUrl from '../assets/sounds/menu/buttons/click.mp3'
 import hoverUrl from '../assets/sounds/menu/buttons/hover.mp3'
 import firstTrack from '../assets/musics/menu/one.mp3'
 import secondTrack from '../assets/musics/menu/two.mp3'
 import thirdTrack from '../assets/musics/menu/three.mp3'
 
-const tracks = [firstTrack, secondTrack, thirdTrack]
+const playgroundTracks = Object.values(import.meta.glob('../assets/maps/park/4_playground/musics/*.mp3',
+  { eager: true, import: 'default', query: '?url' }))
+const combatAssets = import.meta.glob('../assets/sounds/in_game/**/*.mp3',
+  { eager: true, import: 'default', query: '?url' })
+const combatDirectories = {
+  kill: 'kill',
+  'pre-stun': 'pre_stun',
+  'full-stun': 'stun/full_stun',
+  'quick-stun': 'stun/quick_stun',
+}
+const combatTracks = Object.fromEntries(Object.entries(combatDirectories).map(([kind, directory]) => [
+  kind,
+  Object.keys(combatAssets).sort()
+    .filter((path) => path.startsWith(`../assets/sounds/in_game/${directory}/`))
+    .map((path) => combatAssets[path]),
+]))
 
-export function useMenuAudio(settings, menuActive) {
+export function useGameAudio(settings, menuActive, parkArea) {
   const click = new Audio(clickUrl)
   const hover = new Audio(hoverUrl)
   const music = new Audio()
+  const menu = { tracks: [firstTrack, secondTrack, thirdTrack], queue: [], current: null, time: 0 }
+  const playground = { tracks: playgroundTracks, queue: [], current: null, time: 0 }
+  const effectBuffers = new Map()
+  const activeEffects = new Set()
+  const fallbackEffects = new Set()
   click.preload = 'auto'
   hover.preload = 'auto'
   let context
   let musicGain
   let effectsGain
   let activated = false
-  let currentTrack
-  let queue = []
+  let playlist
+  let audioScope = 0
 
   function setVolume() {
     const { sfx, music: musicLevel } = settings.value
@@ -29,24 +50,121 @@ export function useMenuAudio(settings, menuActive) {
       click.volume = sfx / 100
       hover.volume = sfx / 100
       music.volume = musicLevel / 100
+      for (const clip of fallbackEffects) clip.volume = sfx / 100
     }
   }
 
   function startNextTrack() {
-    if (!queue.length) queue = [...tracks]
-    const choices = queue.filter((track) => track !== currentTrack)
-    currentTrack = choices[Math.floor(Math.random() * choices.length)]
-    queue.splice(queue.indexOf(currentTrack), 1)
-    music.src = currentTrack
+    if (!playlist) return
+    if (!playlist.queue.length) playlist.queue = [...playlist.tracks]
+    const choices = playlist.queue.length > 1 ? playlist.queue.filter((track) => track !== playlist.current) : playlist.queue
+    playlist.current = choices[Math.floor(Math.random() * choices.length)]
+    playlist.queue.splice(playlist.queue.indexOf(playlist.current), 1)
+    playlist.time = 0
+    loadTrack()
+  }
+
+  function loadTrack() {
+    music.src = playlist.current
+    if (playlist.time) music.currentTime = playlist.time
     playMusic()
   }
 
   function playMusic() {
-    if (menuActive.value && activated && music.paused) music.play().catch(() => {})
+    if (playlist && activated && music.paused) music.play().catch(() => {})
+  }
+
+  function stopCombatSounds() {
+    audioScope++
+    for (const source of activeEffects) source.stop()
+    for (const clip of fallbackEffects) clip.pause()
+    activeEffects.clear()
+    fallbackEffects.clear()
+  }
+
+  function selectPlaylist() {
+    stopCombatSounds()
+    if (!menuActive.value) preloadCombatSounds()
+    const inPlayground = areas[parkArea.value]?.id === 'playground' && playground.tracks.length > 0
+    const next = menuActive.value ? menu : inPlayground ? playground : null
+    if (next === playlist) return
+    if (playlist === menu) {
+      hover.pause()
+      menu.time = music.currentTime
+    }
+    if (playlist === playground) {
+      playground.current = null
+      playground.queue = []
+    }
+    music.pause()
+    playlist = next
+    if (activated && playlist) {
+      if (playlist.current) loadTrack()
+      else startNextTrack()
+    } else if (music.hasAttribute('src')) {
+      music.removeAttribute('src')
+      music.load()
+    }
+  }
+
+  function loadEffectBuffer(url) {
+    if (!effectBuffers.has(url)) {
+      const buffer = fetch(url).then((response) => {
+        if (!response.ok) throw new Error('Could not load combat sound.')
+        return response.arrayBuffer()
+      }).then((data) => context.decodeAudioData(data)).catch((error) => {
+        effectBuffers.delete(url)
+        throw error
+      })
+      effectBuffers.set(url, buffer)
+    }
+    return effectBuffers.get(url)
+  }
+
+  function preloadCombatSounds() {
+    if (!context || parkArea.value == null) return
+    for (const tracks of Object.values(combatTracks)) {
+      for (const url of tracks) loadEffectBuffer(url).catch(() => {})
+    }
+  }
+
+  function playCombatSounds(sounds) {
+    if (!activated || menuActive.value || !settings.value.sfx) return
+    const urls = sounds.map(({ kind, variant }) => {
+      const tracks = combatTracks[kind] ?? []
+      return tracks[Math.floor(variant * tracks.length)]
+    }).filter(Boolean)
+    if (context) {
+      const scope = audioScope
+      Promise.all(urls.map((url) => loadEffectBuffer(url).catch(() => null))).then((buffers) => {
+        if (scope !== audioScope || !settings.value.sfx || context.state !== 'running') return
+        const startAt = context.currentTime
+        for (const buffer of buffers.filter(Boolean)) {
+          const source = context.createBufferSource()
+          source.buffer = buffer
+          source.connect(effectsGain)
+          activeEffects.add(source)
+          source.onended = () => {
+            activeEffects.delete(source)
+            source.disconnect()
+          }
+          source.start(startAt)
+        }
+      })
+      return
+    }
+    for (const url of urls) {
+      const clip = new Audio(url)
+      clip.volume = settings.value.sfx / 100
+      fallbackEffects.add(clip)
+      const cleanup = () => fallbackEffects.delete(clip)
+      clip.addEventListener('ended', cleanup, { once: true })
+      clip.play().catch(cleanup)
+    }
   }
 
   function activate(event) {
-    if (!menuActive.value || !event.isTrusted) return
+    if (!event.isTrusted) return
     if (!activated && window.AudioContext) {
       context = new AudioContext()
       effectsGain = context.createGain()
@@ -57,10 +175,13 @@ export function useMenuAudio(settings, menuActive) {
       context.createMediaElementSource(hover).connect(effectsGain)
       context.createMediaElementSource(music).connect(musicGain)
     }
-    if (!activated) setVolume()
-    activated = true
+    if (!activated) {
+      setVolume()
+      activated = true
+      if (!menuActive.value) preloadCombatSounds()
+    }
     if (context && context.state !== 'running') context.resume().catch(() => {})
-    if (currentTrack) playMusic()
+    if (playlist?.current) playMusic()
     else startNextTrack()
   }
 
@@ -77,19 +198,13 @@ export function useMenuAudio(settings, menuActive) {
   }
 
   function playClick(event) {
-    if (!menuActive.value || !event.isTrusted) return
     activate(event)
+    if (!menuActive.value || !event.isTrusted) return
     if (event.target.closest?.('button:not(:disabled)')) playEffect(click)
   }
 
   watch(settings, () => { if (activated) setVolume() }, { flush: 'sync' })
-  watch(menuActive, (active) => {
-    if (active) playMusic()
-    else {
-      hover.pause()
-      music.pause()
-    }
-  }, { flush: 'sync' })
+  watch([menuActive, parkArea], selectPlaylist, { immediate: true, flush: 'sync' })
 
   onMounted(() => {
     music.addEventListener('ended', startNextTrack)
@@ -105,7 +220,10 @@ export function useMenuAudio(settings, menuActive) {
     document.removeEventListener('keydown', activate, true)
     document.removeEventListener('pointerover', playHover)
     document.removeEventListener('click', playClick, true)
+    stopCombatSounds()
     for (const audio of [click, hover, music]) audio.pause()
     context?.close().catch(() => {})
   })
+
+  return playCombatSounds
 }

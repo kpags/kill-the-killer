@@ -22,6 +22,41 @@ function emptyGame(mode = 'last_man_standing', count = 4) {
   return game
 }
 
+test('combat queues only accepted kill and stun sounds at the corresponding phase', () => {
+  for (const mode of ['last_man_standing', 'Hitman']) {
+    for (const [victim, impact, full] of [
+      ['1', ['kill'], false],
+      ['2', ['pre-stun', 'quick-stun'], false],
+      ['3', ['pre-stun'], true],
+      ['npc', ['kill'], false],
+    ]) {
+      const game = emptyGame(mode)
+      for (const id of ['0', '1', '2', '3']) game.players.get(id).area = 3
+      game.npcs.set('npc', { id: 'npc', color: 'red', pose: 'idle', area: 3, x: 201, y: 290 })
+      const kinds = () => game.soundEvents.get(3)?.map(({ kind }) => kind) ?? []
+      assert.match(attackInPark(game, '0', 'missing', 99), /unavailable/)
+      assert.equal(game.soundEvents.size, 0)
+      assert.equal(attackInPark(game, '0', victim, 100), undefined)
+      assert.deepEqual([...game.soundEvents.keys()], [3])
+      assert.deepEqual(kinds(), impact)
+      assert.ok(game.soundEvents.get(3).every(({ variant }) => variant >= 0 && variant < 1))
+      game.soundEvents.clear()
+      advanceParkCombat(game, 549)
+      assert.deepEqual(kinds(), [])
+      advanceParkCombat(game, 550)
+      advanceParkCombat(game, 551)
+      assert.deepEqual(kinds(), full ? ['full-stun'] : [])
+    }
+
+    const game = emptyGame(mode)
+    assert.equal(attackInPark(game, '0', '3', 0), undefined)
+    game.soundEvents.clear()
+    assert.equal(attackInPark(game, '2', '3', 200), undefined)
+    advanceParkCombat(game, 450)
+    assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['kill'])
+  }
+})
+
 test('combat validates identity, visibility, area and an exact unscaled 20-pixel ground distance', () => {
   for (const area of areas.keys()) {
     const game = emptyGame()
