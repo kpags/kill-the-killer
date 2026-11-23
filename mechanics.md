@@ -139,7 +139,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Each player sees a small rainbow shadow under their own stickman's feet, including their translucent hiding preview.
 - Park starts the Profile Meter at 33% and applies the behavior rates for movement, NPC proximity, seating, dancing, and hiding transitions. The proximity radius is 36 map pixels at default model scale. Entering and leaving hiding each apply the −5 rate for one second. Last Man Standing uses a shuffled, one-to-one target cycle among surviving players. Hitman allows multiple killers to share a target. A solo session without bots has no target.
 - The pause menu blocks local movement and interaction while the multiplayer session continues. **Resume** returns to gameplay, **Settings** opens the audio controls, and **Exit** leaves the room. When the host exits, the room closes for everyone.
-- The home screen and pause menu share **SFX** and **Music** sliders. Both default to 100%, and the browser saves the player's choices.
+- Home Settings and the pause menu share **SFX** and **Music** sliders. Both default to 20%, and the browser saves the player's choices.
+- Buttons on Home, Home Settings, and Room play hover and click sounds after the first menu interaction. Menu music continuously shuffles the three tracks and follows the Music slider. It pauses in Park and resumes when the player returns to a menu.
 
 ### Park NPCs
 

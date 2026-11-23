@@ -1,13 +1,15 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { normalizeInviteCode } from '../shared/lobbyRules.js'
 import RoomLobby from './RoomLobby.vue'
 import ParkGame from './ParkGame.vue'
 import AudioSettings from './AudioSettings.vue'
 import { createRoomConnection } from './roomConnection.js'
+import { useMenuAudio } from './menuAudio.js'
 
 const actions = ['Play', 'Join Room', 'Settings']
 const audioStorageKey = 'kill-the-killer-audio-settings'
+const defaultAudioLevel = 20
 const lobby = ref(null)
 const game = ref(null)
 const home = ref(null)
@@ -22,12 +24,12 @@ const homeSettingsButton = ref(null)
 const audioSettings = ref(loadAudioSettings())
 
 function loadAudioSettings() {
-  const normalize = (value) => Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : 100
+  const normalize = (value) => Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : defaultAudioLevel
   try {
     const saved = JSON.parse(window.localStorage.getItem(audioStorageKey))
     return { sfx: normalize(saved?.sfx), music: normalize(saved?.music) }
   } catch {
-    return { sfx: 100, music: 100 }
+    return { sfx: defaultAudioLevel, music: defaultAudioLevel }
   }
 }
 
@@ -44,6 +46,7 @@ const connection = createRoomConnection(async (reason) => {
   await focusPlay()
 })
 const { room, playerId, park, reconnecting } = connection
+useMenuAudio(audioSettings, computed(() => room.value?.phase !== 'park'))
 
 watch(room, (value, previous) => {
   if (value && !previous) lobby.value?.focusHeading()
