@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { areas, colors, constrain, groundRange, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { claimSeat } from './parkSeats.js'
 import { animationDuration, isLiving, screamPoses } from '../shared/combat.js'
+import { queueParkSound } from './parkSounds.js'
 
 const phonePoses = ['phone-one', 'phone-two', 'phone-three']
 const directions = [-1, 1]
@@ -177,8 +178,9 @@ function retireNpc(game, actor, respawnAt) {
 
 function startPanic(game, areaIndex, { startsAt, deathX }) {
   const area = areas[areaIndex]
-  for (const actor of game.npcs.values()) {
-    if (actor.area !== areaIndex || !isLiving(actor)) continue
+  const crowd = [...game.npcs.values()].filter((actor) => actor.area === areaIndex && isLiving(actor))
+  if (crowd.length) queueParkSound(game, areaIndex, 'crowd-reaction')
+  for (const actor of crowd) {
     Object.assign(actor, constrain(area, actor.x, actor.y))
     const pose = pick(screamPoses, game.random)
     Object.assign(actor, {

@@ -61,6 +61,7 @@ const profile = computed(() => props.state?.profile ?? profileBarSize)
 const profileFills = computed(() => Array.from({ length: profileBars }, (_, index) => profileFill(profile.value, index)))
 const profileLabel = computed(() => profile.value >= maxProfile ? 'Max' : `${Math.floor(profile.value * 10) / 10}%`)
 const target = computed(() => props.state?.target ?? null)
+const targetSearching = computed(() => props.state?.targetReadyAt != null)
 const purplePortrait = ref(null)
 const targetSprite = computed(() => {
   const color = target.value?.color
@@ -75,8 +76,7 @@ const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.li
 const canAct = computed(() => alive.value && !props.state?.matchEnded && props.state?.mode !== 'combat')
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
-  if (props.state?.victimCue?.kind === 'killed') return null
-  if (props.state?.winner) return `${props.state.winner.name} wins!`
+  if (props.state?.winner || props.state?.victimCue?.kind === 'killed') return null
   if (props.state?.respawnMs) return `Respawning in ${Math.ceil(props.state.respawnMs / 1000)}s`
   if (props.state?.spectating) return 'Spectating'
   if (props.state && !alive.value) return 'You were eliminated.'
@@ -233,6 +233,7 @@ async function spectate(event) {
 }
 
 function keyDown(event) {
+  if (props.state?.winner) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
@@ -302,9 +303,15 @@ watch(() => props.reconnecting, (value) => {
 watch(canAct, (value) => { if (!value) closeActions() })
 watch(canMove, (value) => { if (!value) releaseMovement() })
 watch(() => props.state?.matchEnded, (value) => { if (value) release() })
+watch(() => Boolean(props.state?.winner), (showWinner) => {
+  if (!showWinner) return
+  if (pauseDialog.value?.open) pauseDialog.value.close()
+  pauseScreen.value = null
+  playerListOpen.value = false
+})
 
 async function openPause() {
-  if (pauseScreen.value) return
+  if (pauseScreen.value || props.state?.winner) return
   closeActions()
   pauseScreen.value = 'pause'
   error.value = ''
@@ -454,6 +461,7 @@ function readState() {
     penaltyNotices: props.state?.penaltyNotices ?? [],
     victimCue: props.state?.victimCue,
     target: target.value,
+    targetReadyAt: props.state?.targetReadyAt,
     life: props.state?.life,
     spectating: props.state?.spectating,
     respawnMs: props.state?.respawnMs,
@@ -496,14 +504,16 @@ defineExpose({ readState })
           <span class="park-stamina-fill" :style="{ transform: `scaleX(${stamina / 100})` }"></span>
         </div>
       </div>
-      <button type="button" class="glass-button park-button park-hud-pause" aria-keyshortcuts="P" @click="openPause">Pause</button>
+      <button type="button" class="glass-button park-button park-hud-pause" aria-keyshortcuts="P"
+        :disabled="Boolean(state?.winner)" @click="openPause">Pause</button>
       <section class="park-target" aria-label="Target">
         <div class="park-target-text">
           <span v-if="target">Kill</span>
-          <strong>{{ target?.name ?? 'No target' }}</strong>
+          <strong>{{ targetSearching ? 'Searching…' : target?.name ?? 'No target' }}</strong>
         </div>
         <div class="park-target-frame" aria-hidden="true">
-          <img v-if="targetSprite" :src="targetSprite" alt="" />
+          <span v-if="targetSearching" class="park-target-static"></span>
+          <img v-else-if="targetSprite" :src="targetSprite" alt="" />
         </div>
       </section>
     </header>
@@ -513,6 +523,13 @@ defineExpose({ readState })
         <defs>
           <filter id="park-pov-smudge" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
             <feGaussianBlur :stdDeviation="`${smudgeWidth} 0`" edgeMode="duplicate" />
+          </filter>
+          <filter id="park-target-noise" color-interpolation-filters="sRGB">
+            <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="9" />
+            <feColorMatrix type="saturate" values="0" />
+            <feComponentTransfer>
+              <feFuncA type="linear" slope="0" intercept="1" />
+            </feComponentTransfer>
           </filter>
         </defs>
       </svg>
@@ -544,7 +561,6 @@ defineExpose({ readState })
           :disabled="reconnecting || Boolean(pauseScreen)" @change="spectate">
           <option v-for="(place, index) in areas" :key="place.id" :value="index">{{ place.name }}</option>
         </select>
-        <span v-if="state.winner">Use Pause to exit.</span>
       </section>
     </div>
 
@@ -637,6 +653,9 @@ defineExpose({ readState })
       <p v-if="killerCredit" class="park-killer-credit">
         {{ killerCredit }}<span aria-hidden="true">{{ killerCredit }}</span>
       </p>
+    </div>
+    <div v-if="state?.winner" class="park-winner" role="status">
+      <p>Winner:<br />{{ state.winner.name }}</p>
     </div>
   </main>
 </template>
@@ -801,6 +820,20 @@ defineExpose({ readState })
   left: calc(-100% * 56 / 48);
 }
 
+.park-target-static {
+  position: absolute;
+  inset: -50%;
+  background: #888;
+  filter: url(#park-target-noise) contrast(2.5);
+  animation: park-target-static 240ms steps(1) infinite;
+}
+
+@keyframes park-target-static {
+  25% { transform: translate(18%, -16%); }
+  50% { transform: translate(-20%, 11%); }
+  75% { transform: translate(9%, 22%); }
+}
+
 @media (max-width: 640px) {
   .park-hud {
     grid-template-areas: "profile target target" "area stamina pause";
@@ -822,6 +855,8 @@ defineExpose({ readState })
   .park-profile-fill {
     transition: none;
   }
+
+  .park-target-static { animation: none; }
 }
 
 .park-stage {
@@ -841,7 +876,7 @@ defineExpose({ readState })
   background: color-mix(in srgb, #171717 calc(var(--penalty-grayscale) * 100%), #101728);
 }
 
-.park-penalized > :not(.park-stage, .park-victim-cue),
+.park-penalized > :not(.park-stage, .park-victim-cue, .park-winner),
 .park-penalized .park-stage > :not(canvas),
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
@@ -953,6 +988,29 @@ defineExpose({ readState })
   background-repeat: no-repeat;
   pointer-events: none;
   visibility: hidden;
+}
+
+.park-winner {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #08090f80;
+  color: #fff;
+  text-align: center;
+}
+
+.park-winner p {
+  max-width: 100%;
+  margin: 0;
+  font-size: clamp(2.75rem, 10vmin, 7rem);
+  font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  -webkit-text-stroke: clamp(5px, 1.3vmin, 12px) #000;
+  paint-order: stroke fill;
 }
 
 .park-killer-credit {

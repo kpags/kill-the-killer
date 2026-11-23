@@ -17,24 +17,26 @@ const penaltyGlowPadding = 22
 const penaltyGlowColor = '#ff1737'
 
 function paintCombatFeedback(ctx, feedback, head, now, width) {
-  const stackSpacing = feedback.some(({ kind }) => kind === 'target-killed') ? 42 : 16
+  const stackSpacing = feedback.some(({ kind, points }) => kind === 'target-killed' || points != null) ? 42 : 16
   let targetLabelTop = null
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
   ctx.strokeStyle = '#000'
-  for (const [index, { kind, text, startedAt }] of feedback.entries()) {
+  for (const [index, { kind, text, startedAt, points }] of feedback.entries()) {
     const age = Math.max(0, now - startedAt)
     const duration = combatFeedbackDuration(kind)
     if (age >= duration) continue
     const targetKilled = kind === 'target-killed'
-    const lines = targetKilled ? text.split('\n') : [text]
+    const scoredKill = kind === 'rating' && points != null
+    const lines = targetKilled ? text.split('\n') : scoredKill ? [`+${points}`, text] : [text]
+    const lineSpacing = targetKilled ? 23 : 18
     const slide = reducedMotion.matches ? 1 : Math.min(1, age / targetKilledSlideMs)
     const progress = age / duration
     const lift = reducedMotion.matches ? 0 : 30 * (1 - (1 - progress) ** 2)
     const top = targetKilled ? head.y + 12 - 56 * slide : head.y - 44 - lift
     const stack = (feedback.length - index - 1) * stackSpacing
-    const y = Math.max(12, top - stack)
+    const y = Math.max(12, top - stack - (scoredKill ? lineSpacing : 0))
     if (targetKilled) targetLabelTop = Math.min(targetLabelTop ?? Infinity, y - 15)
     ctx.font = targetKilled ? '800 18px system-ui, sans-serif' : '800 15px system-ui, sans-serif'
     ctx.lineWidth = targetKilled ? 10 : 3
@@ -42,8 +44,8 @@ function paintCombatFeedback(ctx, feedback, head, now, width) {
     ctx.fillStyle = feedbackColors[kind]
     const inset = Math.max(...lines.map((line) => ctx.measureText(line).width / 2)) + ctx.lineWidth / 2 + 2
     const x = Math.max(inset, Math.min(width - inset, head.x))
-    for (const [lineIndex, line] of lines.entries()) ctx.strokeText(line, x, y + lineIndex * 23)
-    for (const [lineIndex, line] of lines.entries()) ctx.fillText(line, x, y + lineIndex * 23)
+    for (const [lineIndex, line] of lines.entries()) ctx.strokeText(line, x, y + lineIndex * lineSpacing)
+    for (const [lineIndex, line] of lines.entries()) ctx.fillText(line, x, y + lineIndex * lineSpacing)
   }
   return targetLabelTop
 }
@@ -51,6 +53,12 @@ function paintCombatFeedback(ctx, feedback, head, now, width) {
 function paintFrame(ctx, atlas, index, x = 0, y = 0) {
   const { width, height, columns, image } = atlas
   ctx.drawImage(image, index % columns * width, Math.floor(index / columns) * height, width, height, x, y, width, height)
+}
+
+function penaltyGlowStrength(until, now) {
+  if (reducedMotion.matches) return 1
+  const age = now - (until - npcPenaltyMs)
+  return 0.6 + 0.4 * Math.cos(2 * Math.PI * age / 1000)
 }
 
 function distortScene(ctx, atlas, frame, strength, time) {
@@ -300,8 +308,6 @@ export function createParkRenderer(canvas, art) {
     const penaltyEnd = state.penaltyUntil ?? state.penaltyFadeAt ?? -Infinity
     const penaltyStrength = Math.min(1, Math.max(0, (penaltyEnd + penaltyFadeMs - serverNow) / penaltyFadeMs))
     const penaltyFilter = penaltyStrength ? `grayscale(${penaltyStrength})` : 'none'
-    const penaltyAge = serverNow - (state.penaltyUntil - npcPenaltyMs)
-    const glowStrength = !penaltyActive || reducedMotion.matches ? 1 : 0.6 + 0.4 * Math.cos(2 * Math.PI * penaltyAge / 1000)
 
     ctx.resetTransform()
     ctx.filter = penaltyFilter
@@ -397,9 +403,10 @@ export function createParkRenderer(canvas, art) {
       ctx.globalAlpha = actor.opacity
       ctx.translate(actor.x, actor.y)
       ctx.scale(actor.facing * modelScale, modelScale)
-      if (penaltyActive && actor.id === playerId) {
+      const glowUntil = actor.id === playerId ? state.penaltyUntil : actor.penaltyGlowUntil
+      if (glowUntil > serverNow) {
         ctx.filter = 'none'
-        paintPenaltyGlow(actor, glowStrength)
+        paintPenaltyGlow(actor, penaltyGlowStrength(glowUntil, serverNow))
       }
       if (penaltyStrength && !(penaltyActive && actor.id === playerId)) {
         // Apply the color filter on a sprite-sized canvas to keep the fade responsive.
@@ -463,7 +470,7 @@ export function createParkRenderer(canvas, art) {
       ctx.scale(preview.facing * preview.scale, preview.scale)
       if (penaltyActive) {
         ctx.filter = 'none'
-        paintPenaltyGlow(preview, glowStrength)
+        paintPenaltyGlow(preview, penaltyGlowStrength(state.penaltyUntil, serverNow))
       }
       paintFrame(ctx, preview.atlas, preview.frame, -80, -footRow)
       ctx.restore()

@@ -2,8 +2,10 @@ import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { WebSocket, WebSocketServer } from 'ws'
 import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from '../shared/lobbyRules.js'
+import { winnerDisplayMs } from '../shared/combat.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark, stopParkInput } from './parkSession.js'
 import { attackInPark, spectateInPark } from './parkCombat.js'
+import { parkSoundsFor } from './parkSounds.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const modeIds = Object.keys(JSON.parse(readFileSync(new URL('../data/game_modes.json', import.meta.url), 'utf8')))
@@ -69,15 +71,23 @@ export function createLobbyServer({
   }
 
   function broadcastPark(room, now = performance.now()) {
+    if (room.game.winner && now >= room.game.winnerAt) {
+      room.game.returnHomeAt ??= now + winnerDisplayMs
+      if (now >= room.game.returnHomeAt) {
+        closeRoom(room)
+        return
+      }
+    }
     for (const player of room.slots) {
       if (player?.socket && player.socket.bufferedAmount < 32_768) {
         const state = parkView(room.game, player.id, now)
-        const sounds = room.game.soundEvents.get(state.area)
+        const sounds = parkSoundsFor(room.game, player.id, state.area)
         send(player.socket, { type: 'park', state })
-        if (sounds) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
+        if (sounds.length) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
       }
     }
     room.game.soundEvents.clear()
+    room.game.privateSoundEvents.clear()
   }
 
   function detach(player) {
@@ -87,15 +97,19 @@ export function createLobbyServer({
     player.socket = null
   }
 
+  function closeRoom(room, reason, leavingHost) {
+    rooms.delete(room.code)
+    for (const member of room.slots) {
+      if (!member || member.isBot) continue
+      if (member !== leavingHost) send(member.socket, { type: 'room_closed', reason })
+      detach(member)
+    }
+  }
+
   function removePlayer(player) {
     const room = player.room
     if (player.id === room.hostId) {
-      rooms.delete(room.code)
-      for (const member of room.slots) {
-        if (!member || member.isBot) continue
-        if (member !== player) send(member.socket, { type: 'room_closed', reason: 'The host left the room.' })
-        detach(member)
-      }
+      closeRoom(room, 'The host left the room.', player)
     } else {
       room.slots[room.slots.indexOf(player)] = null
       room.game?.players.delete(player.id)

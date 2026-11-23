@@ -118,6 +118,45 @@ test('Actions wheel commands broadcast the same chosen clip and stop on movement
   assert.equal(playerIn(update).actionStartedAt, undefined)
 })
 
+test('the penalty clip reaches only the penalized player and their assigned hunter', { timeout: 5000 }, async (context) => {
+  const connect = await setup(context)
+  const host = await connect()
+  const created = await host.command('create')
+  const guests = []
+  for (let index = 0; index < 2; index++) {
+    const client = await connect()
+    const { playerId } = await client.command('join', { code: created.room.code })
+    guests.push({ client, playerId })
+  }
+  await host.command('start')
+  const inGame = ({ type }) => type === 'park'
+  const states = await Promise.all(guests.map(({ client }) => client.waitFor(inGame)))
+  const hunterIndex = states.findIndex(({ state }) => state.target?.name === 'Player 1')
+  assert.ok(hunterIndex >= 0)
+  const initial = (await host.waitFor(inGame)).state
+  const own = initial.actors.find(({ id }) => id === created.playerId)
+  const playerIds = new Set([created.playerId, ...guests.map(({ playerId }) => playerId)])
+  const victim = initial.actors.find(({ id, x, y }) => !playerIds.has(id) && Math.hypot(x - own.x, y - own.y) <= 19)
+  assert.ok(victim)
+
+  const senderSounds = []
+  host.socket.on('message', (raw) => {
+    const message = JSON.parse(raw.toString())
+    if (message.type === 'park_sounds') senderSounds.push(...message.sounds)
+  })
+  assert.equal((await host.command('attack', { actorId: victim.id })).error, undefined)
+  const bystander = guests[1 - hunterIndex].client
+  const glowing = await bystander.waitFor(({ state }) =>
+    state?.actors.find(({ id }) => id === created.playerId)?.penaltyGlowUntil > state?.serverTime)
+  assert.equal(glowing.state.penaltyUntil, undefined)
+  const audio = ({ type, sounds }) => type === 'park_sounds' && sounds.some(({ kind }) => kind === 'kill')
+  const hunterAudio = await guests[hunterIndex].client.waitFor(audio)
+  const bystanderAudio = await bystander.waitFor(audio)
+  assert.deepEqual(hunterAudio.sounds, senderSounds)
+  assert.deepEqual(senderSounds.map(({ kind }) => kind), ['kill', 'penalty'])
+  assert.deepEqual(bystanderAudio.sounds, senderSounds.filter(({ kind }) => kind === 'kill'))
+})
+
 async function approach(client, playerId, victimId) {
   let game = await client.waitFor(({ type }) => type === 'park')
   for (let tick = 0; tick < 80; tick++) {
@@ -137,7 +176,7 @@ async function approach(client, playerId, victimId) {
   assert.fail('Could not move the test player within attack range')
 }
 
-test('combat broadcasts the same death timing and reconnect restores elimination and the winner', { timeout: 10_000 }, async (context) => {
+test('combat broadcasts the same winner and returns all players home three seconds later', { timeout: 12_000 }, async (context) => {
   const connect = await setup(context, { reconnectGraceMs: 3000 })
   const host = await connect()
   const created = await host.command('create')
@@ -176,9 +215,18 @@ test('combat broadcasts the same death timing and reconnect restores elimination
     replacement.waitFor((message) => screamsIn(message).length > 0),
   ])
   assert.deepEqual(screamsIn(hostPanic), screamsIn(guestPanic))
+  const crowdAudio = ({ type, sounds }) => type === 'park_sounds' && sounds.some(({ kind }) => kind === 'crowd-reaction')
+  const [hostCrowd, guestCrowd] = await Promise.all([host.waitFor(crowdAudio), replacement.waitFor(crowdAudio)])
+  assert.deepEqual(hostCrowd.sounds, guestCrowd.sounds)
   assert.ok(screamsIn(hostPanic).every(({ actionStartedAt }) => actionStartedAt === corpse.combat.endsAt + 1000))
-  const end = await replacement.waitFor(({ state }) => state?.spectating && state.winner, 4000)
+  const [hostEnd, end] = await Promise.all([
+    host.waitFor(({ state }) => state?.winner, 4000),
+    replacement.waitFor(({ state }) => state?.spectating && state.winner, 4000),
+  ])
+  const winnerShownAt = performance.now()
   assert.equal(end.state.winner.id, created.playerId)
+  assert.deepEqual(hostEnd.state.winner, end.state.winner)
+  assert.equal(hostEnd.state.serverTime, end.state.serverTime)
   assert.ok(end.state.serverTime >= corpse.combat.startedAt + 3300)
   assert.equal(end.state.victimCue, undefined)
   assert.ok(end.state.actors.some(({ id }) => id === created.playerId))
@@ -190,8 +238,12 @@ test('combat broadcasts the same death timing and reconnect restores elimination
   await spectator.command('resume', { token: joined.token })
   const recoveredSpectator = await spectator.waitFor(({ state }) => state?.spectating && state.area === 5)
   assert.equal(recoveredSpectator.state.winner.id, created.playerId)
-  await host.command('leave')
-  await spectator.waitFor(({ type }) => type === 'room_closed')
+  const closed = ({ type }) => type === 'room_closed'
+  const finished = await Promise.all([host.waitFor(closed, 4000), spectator.waitFor(closed, 4000)])
+  assert.ok(performance.now() - winnerShownAt >= 2950)
+  assert.ok(finished.every(({ reason }) => reason === undefined))
+  assert.equal((await spectator.command('resume', { token: joined.token })).code, 'SESSION_ENDED')
+  assert.equal((await host.command('create')).error, undefined)
 })
 
 test('Hitman reconnect during death recovers the five-second respawn and a green-boundary spawn', { timeout: 12_000 }, async (context) => {
@@ -208,6 +260,15 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
   assert.ok(death.state.respawnMs > 4000 && death.state.respawnMs <= 5000)
   const startedAt = death.state.actors.find(({ id }) => id === joined.playerId).combat.startedAt
   assert.deepEqual(death.state.victimCue, { kind: 'killed', startedAt, killerName: 'Player 1' })
+  const search = await host.waitFor(({ state }) => state?.targetReadyAt)
+  assert.equal(search.state.target, null)
+  assert.equal(search.state.targetReadyAt, startedAt + 3000)
+  host.socket.close()
+  const resumedHunter = await connect()
+  assert.equal((await resumedHunter.command('resume', { token: created.token })).error, undefined)
+  const resumedSearch = await resumedHunter.waitFor(({ state }) => state?.targetReadyAt)
+  assert.equal(resumedSearch.state.targetReadyAt, search.state.targetReadyAt)
+  assert.equal(resumedSearch.state.target, null)
   guest.socket.close()
   const replacement = await connect()
   await replacement.command('resume', { token: joined.token })
@@ -221,6 +282,9 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
   await respawning.command('resume', { token: joined.token })
   const recoveredWait = await respawning.waitFor(({ state }) => state?.life === 'respawning')
   assert.ok(recoveredWait.state.respawnMs > 0)
+  const noTarget = await resumedHunter.waitFor(({ state }) => state?.serverTime >= startedAt + 3000)
+  assert.equal(noTarget.state.targetReadyAt, undefined)
+  assert.equal(noTarget.state.target, null)
   const respawned = await respawning.waitFor(({ state }) => state?.life === 'alive', 4000)
   assert.ok(respawned.state.serverTime - startedAt >= 5000)
   assert.equal(respawned.state.respawnMs, 0)
@@ -233,6 +297,8 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
   assert.equal(actor.generation, 1)
   assert.equal(respawned.state.stamina, 100)
   assert.equal(respawned.state.profile, 33)
+  const nextTarget = await resumedHunter.waitFor(({ state }) => state?.target)
+  assert.equal(nextTarget.state.target.name, 'Player 2')
 })
 
 test('reconnecting a stunned killer preserves the shared stun deadline and target', { timeout: 10_000 }, async (context) => {

@@ -15,6 +15,8 @@ const combatDirectories = {
   'pre-stun': 'pre_stun',
   'full-stun': 'stun/full_stun',
   'quick-stun': 'stun/quick_stun',
+  'crowd-reaction': 'crowd_reaction',
+  penalty: 'penalty',
 }
 const combatTracks = Object.fromEntries(Object.entries(combatDirectories).map(([kind, directory]) => [
   kind,

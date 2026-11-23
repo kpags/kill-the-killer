@@ -55,11 +55,11 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
   const game = {
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
-    soundEvents: new Map(),
+    soundEvents: new Map(), privateSoundEvents: new Map(),
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
-  refreshParkTargets(game, true)
+  refreshParkTargets(game, 0, true)
   spawnParkNpcs(game)
   return game
 }
@@ -244,7 +244,7 @@ export function stepPark(game, elapsedMs, now) {
 
 export function parkView(game, playerId, now) {
   const actor = game.players.get(playerId)
-  refreshParkTargets(game)
+  refreshParkTargets(game, now)
   const target = game.players.get(game.targets.get(playerId))
   const hitman = game.modeId === 'Hitman'
   const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
@@ -284,18 +284,20 @@ export function parkView(game, playerId, now) {
     victimCue: actor.victimCue && now < victimCueEndsAt(actor.victimCue) ? actor.victimCue : undefined,
     combatFeedback: actors.includes(actor) ? actor.combatFeedback
       ?.filter(({ area: eventArea, kind, startedAt }) => eventArea === area && now - startedAt < combatFeedbackDuration(kind))
-      .map(({ kind, text, startedAt }) => ({ kind, text, startedAt })) : undefined,
+      .map(({ area, ...feedback }) => feedback) : undefined,
     target: target ? { name: target.name, color: target.color } : null,
+    targetReadyAt: actor.targetReadyAt,
     mode: actor.mode,
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),
     actors: actors.map(({ id, color, area: actorArea, x, y, facing, pose, mode, animationOffset, actionStartedAt,
-      life, combat, vanishesAt, generation }) => ({
+      life, combat, vanishesAt, generation, penaltyUntil: modelPenaltyUntil }) => ({
       id, color, area: actorArea, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
       facing, pose, hidden: mode === 'hide', animationOffset, life: life ?? 'alive',
       combat: combat ? { startedAt: combat.startedAt, endsAt: combat.endsAt } : null,
       actionStartedAt: actionStartedAt ?? undefined,
       oneShot: mode === 'panic' && actionStartedAt != null ? true : undefined,
+      ...(modelPenaltyUntil > now ? { penaltyGlowUntil: modelPenaltyUntil } : {}),
       vanishesAt, generation: generation ?? 0,
     })),
   }

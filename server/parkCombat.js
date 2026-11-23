@@ -1,21 +1,16 @@
 import { areas, constrain, groundRange } from '../shared/park.js'
 import { animationDuration, attackRange, combatFeedbackDuration, deathFadeMs, inAttackRange, isLiving,
-  npcPenaltyMs, penaltyNoticeLimit, respawnDelayMs, stunMs, victimCueEndsAt } from '../shared/combat.js'
+  npcPenaltyMs, penaltyNoticeLimit, respawnDelayMs, stunMs, targetSearchMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideTransitionMs, profileBarSize, profileKillAward } from '../shared/profile.js'
 import { queueNpcPanic } from './parkNpcs.js'
+import { queueParkSound, queuePenaltySound } from './parkSounds.js'
 
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const pick = (values, random) => values[Math.floor(random() * values.length)] ?? null
 
-function queueSound(game, area, kind) {
-  const sounds = game.soundEvents.get(area) ?? []
-  sounds.push({ kind, variant: Math.random() })
-  game.soundEvents.set(area, sounds)
-}
-
-function addCombatFeedback(actor, kind, text, now) {
+function addCombatFeedback(actor, kind, text, now, points) {
   const feedback = (actor.combatFeedback ?? []).filter(({ kind, startedAt }) => now - startedAt < combatFeedbackDuration(kind))
-  feedback.push({ kind, text, startedAt: now, area: actor.area })
+  feedback.push({ kind, text, startedAt: now, area: actor.area, ...(points != null ? { points } : {}) })
   actor.combatFeedback = feedback
 }
 
@@ -25,29 +20,41 @@ function applyNpcPenalty(game, actor, now) {
     .filter(({ playerId, expiresAt }) => expiresAt > now && game.players.has(playerId))
     .slice(1 - penaltyNoticeLimit)
   game.penaltyNotices.push({ id: ++game.penaltySequence, playerId: actor.id, expiresAt: actor.penaltyUntil })
+  queuePenaltySound(game, actor.id)
 }
 
 function setTarget(game, actor, targetId, initial = false) {
-  if (!initial && targetId && game.targets.get(actor.id) !== targetId) actor.profile = 0
+  const previousTargetId = game.targets.get(actor.id) ?? actor.previousTargetId
+  if (!initial && targetId && previousTargetId !== targetId) actor.profile = 0
   game.targets.set(actor.id, targetId)
+  actor.targetReadyAt = undefined
+  actor.previousTargetId = undefined
 }
 
-export function refreshParkTargets(game, initial = false) {
+function startTargetSearch(game, actor, now, previousTargetId) {
+  game.targets.set(actor.id, null)
+  actor.targetReadyAt = now + targetSearchMs
+  actor.previousTargetId = previousTargetId
+}
+
+export function refreshParkTargets(game, now, initial = false) {
   const living = [...game.players.values()].filter(isLiving)
-  if (game.modeId === 'Hitman') {
-    for (const actor of game.players.values()) {
-      if (!isLiving(actor)) {
-        game.targets.set(actor.id, null)
-        continue
-      }
+  const hitman = game.modeId === 'Hitman'
+  const order = hitman ? [] : game.targetOrder.filter((id) => isLiving(game.players.get(id)))
+  for (const actor of game.players.values()) {
+    if (game.winner || !isLiving(actor)) {
+      setTarget(game, actor, null)
+      continue
+    }
+    if (actor.targetReadyAt > now) continue
+    if (hitman) {
       const target = game.players.get(game.targets.get(actor.id))
       if (isLiving(target) && target !== actor) continue
-      const next = pick(living.filter((other) => other !== actor), game.random)
+      const candidates = living.filter((other) => other !== actor)
+      const differentTargets = candidates.filter(({ id }) => id !== actor.previousTargetId)
+      const next = pick(differentTargets.length ? differentTargets : candidates, game.random)
       setTarget(game, actor, next?.id ?? null, initial)
-    }
-  } else {
-    const order = game.targetOrder.filter((id) => isLiving(game.players.get(id)))
-    for (const actor of game.players.values()) {
+    } else {
       const index = order.indexOf(actor.id)
       const targetId = index >= 0 && order.length > 1 ? order[(index + 1) % order.length] : null
       setTarget(game, actor, targetId, initial)
@@ -81,7 +88,9 @@ export function resolveParkWinner(game, now) {
   if (living.length !== 1) return
   const actor = living[0]
   game.winner = { id: actor.id, name: actor.name, color: actor.color }
-  game.winnerAt = Math.max(now, ...[...game.players.values()].map((player) => player.vanishesAt ?? now))
+  game.winnerAt = Math.max(now, ...[...game.players.values()].map((player) => Math.max(
+    player.vanishesAt ?? now, player.victimCue?.kind === 'killed' ? victimCueEndsAt(player.victimCue) : now,
+  )))
   for (const player of game.players.values()) player.input = stopped
 }
 
@@ -96,7 +105,7 @@ export function attackInPark(game, playerId, actorId, now) {
   }
   if (!inAttackRange(actor, victim)) return `Move within ${attackRange} pixels of that model.`
 
-  refreshParkTargets(game)
+  refreshParkTargets(game, now)
   const isNpc = game.npcs.has(actorId)
   const isTarget = game.targets.get(actor.id) === victim.id
   const lastManStanding = game.modeId === 'last_man_standing'
@@ -115,7 +124,7 @@ export function attackInPark(game, playerId, actorId, now) {
     })
     if (isNpc || isTarget) {
       actor.killFlashAt = now
-      queueSound(game, actor.area, 'kill')
+      queueParkSound(game, actor.area, 'kill')
     }
     if (isNpc) {
       adjustProfile(actor, -20)
@@ -127,16 +136,21 @@ export function attackInPark(game, playerId, actorId, now) {
     } else if (isTarget && game.modeId === 'Hitman') {
       const award = profileKillAward(actor.profile)
       actor.score += award.points
-      addCombatFeedback(actor, 'rating', award.rating, now)
+      addCombatFeedback(actor, 'rating', award.rating, now, award.points)
     }
     queueNpcPanic(game, victim, victim.combat.endsAt)
-    refreshParkTargets(game)
     resolveParkWinner(game, now)
+    if (!isNpc && !game.winner) {
+      for (const hunter of game.players.values()) {
+        if (isLiving(hunter) && game.targets.get(hunter.id) === victim.id) startTargetSearch(game, hunter, now, victim.id)
+      }
+    }
+    refreshParkTargets(game, now)
   } else {
     victim.facing = -actor.facing
     beginCombat(victim, 'pre-stun', now, { stun: defensiveStun })
-    queueSound(game, actor.area, 'pre-stun')
-    if (!defensiveStun) queueSound(game, actor.area, 'quick-stun')
+    queueParkSound(game, actor.area, 'pre-stun')
+    if (!defensiveStun) queueParkSound(game, actor.area, 'quick-stun')
     if (!victim.isBot && (lastManStanding || defensiveStun)) {
       victim.victimCue = { kind: 'stunned', startedAt: now }
       if (defensiveStun) victim.victimCue.holdUntil = victim.combat.endsAt + stunMs
@@ -144,10 +158,8 @@ export function attackInPark(game, playerId, actorId, now) {
     addCombatFeedback(actor, 'stun', 'Stunned', now)
     adjustProfile(actor, -10)
     if (defensiveStun && game.modeId === 'Hitman') {
-      const next = pick([...game.players.values()].filter((other) => (
-        isLiving(other) && other !== victim && other !== actor
-      )), game.random)
-      if (next) setTarget(game, victim, next.id)
+      const hasAlternative = [...game.players.values()].some((other) => isLiving(other) && other !== victim && other !== actor)
+      if (hasAlternative) startTargetSearch(game, victim, now, actor.id)
     }
   }
 }
@@ -186,16 +198,16 @@ export function advanceParkCombat(game, now) {
       actor.pose = 'stun'
       actor.combat = { startedAt: actor.combat.endsAt, endsAt: actor.combat.endsAt + stunMs }
       if (now < actor.combat.endsAt) {
-        queueSound(game, actor.area, 'full-stun')
+        queueParkSound(game, actor.area, 'full-stun')
         continue
       }
     }
     finishCombat(actor)
   }
-  refreshParkTargets(game)
+  resolveParkWinner(game, now)
+  refreshParkTargets(game, now)
   // A respawn starts with one bar, even when it receives a fresh target.
   for (const actor of respawned) actor.profile = profileBarSize
-  resolveParkWinner(game, now)
   return new Set(respawned.map((actor) => actor.id))
 }
 

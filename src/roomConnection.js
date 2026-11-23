@@ -41,7 +41,7 @@ export function createRoomConnection(onRoomClosed, onParkSounds) {
     park.value = null
   }
 
-  function roomClosed(reason) {
+  function roomClosed(reason = '') {
     clearRoom()
     onRoomClosed(reason)
   }

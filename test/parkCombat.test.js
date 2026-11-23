@@ -5,6 +5,7 @@ import { animationDuration, combatFeedbackMs, deathOpacity, killFlashMs } from '
 import { profileFill } from '../shared/profile.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark } from '../server/parkSession.js'
 import { advanceParkCombat, attackInPark, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
+import { parkSoundsFor } from '../server/parkSounds.js'
 
 const deathDuration = 450 / 1.3
 const corpseDuration = deathDuration + 2000
@@ -18,7 +19,7 @@ function emptyGame(mode = 'last_man_standing', count = 4) {
   game.targetOrder = [...game.players.keys()]
   game.targets = new Map(game.targetOrder.map((id, index, ids) => [id, ids[(index + 1) % ids.length]]))
   for (const actor of game.players.values()) Object.assign(actor, { x: 200, y: 290 })
-  refreshParkTargets(game, true)
+  refreshParkTargets(game, 0, true)
   return game
 }
 
@@ -121,9 +122,10 @@ test('every color has one-shot combat timing, a complete death, and a separate t
     assert.equal(victim.vanishesAt, vanishesAt)
     assert.equal(victim.spotId, null)
     assert.equal(victim.seatSlot, null)
-    assert.equal(attacker.profile, 0)
+    assert.equal(attacker.profile, 33)
     assert.equal(attacker.stamina, 100)
-    assert.equal(game.targets.get('0'), '2')
+    assert.equal(game.targets.get('0'), null)
+    assert.equal(parkView(game, '0', 1000).targetReadyAt, 4000)
     assert.match(attackInPark(game, '0', '2', 1001), /current action/)
     assert.match(attackInPark(game, '1', '0', 1001), /cannot attack/)
     assert.match(interactInPark(game, '1', 1001), /cannot interact/)
@@ -142,6 +144,12 @@ test('every color has one-shot combat timing, a complete death, and a separate t
     advanceParkCombat(game, vanishesAt)
     assert.equal(victim.life, 'dying')
     assert.equal(parkView(game, '1', vanishesAt).spectating, false)
+    advanceParkCombat(game, 3999)
+    assert.equal(parkView(game, '0', 3999).target, null)
+    advanceParkCombat(game, 4000)
+    assert.equal(parkView(game, '0', 4000).targetReadyAt, undefined)
+    assert.equal(parkView(game, '0', 4000).target.name, 'Player 3')
+    assert.equal(attacker.profile, 0)
     advanceParkCombat(game, 4300)
     assert.equal(victim.life, 'eliminated')
     assert.equal(parkView(game, '1', 4300).spectating, true)
@@ -199,7 +207,7 @@ test('a seated NPC or unassigned player can be killed from a walkable position a
   }
 })
 
-test('a mutual target is killed and the winner is shown only after the death fade', () => {
+test('a final kill shows the same winner to both players after the death fade and Killed cue', () => {
   const game = emptyGame('last_man_standing', 2)
   assert.equal(game.winner, null)
   assert.equal(attackInPark(game, '0', '1', 0), undefined)
@@ -210,23 +218,27 @@ test('a mutual target is killed and the winner is shown only after the death fad
   assert.equal(parkView(game, '0', 0).victimCue, undefined)
   assert.equal(parkView(game, '1', 0).combatFeedback, undefined)
   assert.deepEqual(parkView(game, '1', 0).victimCue, cue)
-  assert.deepEqual(parkView(game, '0', 2799).combatFeedback, feedback)
-  assert.deepEqual(parkView(game, '0', 2800).combatFeedback, [])
   assert.equal(parkView(game, '0', 0).matchEnded, true)
-  assert.equal(parkView(game, '0', corpseDuration - 1).winner, null)
-  assert.equal(parkView(game, '0', corpseDuration).winner.id, '0')
+  assert.equal(parkView(game, '0', 0).targetReadyAt, undefined)
   assert.match(attackInPark(game, '0', '1', 1), /match has ended/)
   stepPark(game, 50, 500)
   setParkInput(game.players.get('0'), { x: 1, y: 0, sprint: false }, 501)
   stepPark(game, 50, 551)
   assert.equal(game.players.get('0').x, 200)
+  assert.equal(parkView(game, '0', corpseDuration).winner, null)
+  assert.deepEqual(parkView(game, '0', 2799).combatFeedback, feedback)
+  assert.deepEqual(parkView(game, '0', 2800).combatFeedback, [])
   advanceParkCombat(game, 3299)
+  assert.equal(parkView(game, '0', 3299).winner, null)
   assert.deepEqual(parkView(game, '1', 3299).victimCue, cue)
   assert.equal(parkView(game, '1', 3299).spectating, false)
   assert.match(spectateInPark(game, '1', 1), /not spectating/)
   advanceParkCombat(game, 3300)
   assert.equal(parkView(game, '1', 3300).victimCue, undefined)
   assert.equal(parkView(game, '1', 3300).spectating, true)
+  const expectedWinner = { id: '0', name: 'Player 1', color: game.players.get('0').color }
+  assert.deepEqual(parkView(game, '0', 3300).winner, expectedWinner)
+  assert.deepEqual(parkView(game, '1', 3300).winner, expectedWinner)
   assert.equal(emptyGame('last_man_standing', 1).winner, null)
 })
 
@@ -249,16 +261,8 @@ test('killer stuns last three seconds after pre-stun and reassign only in Hitman
     assert.equal(parkView(game, '0', 100).victimCue, undefined)
     const cue = { kind: 'stunned', startedAt: 100, holdUntil: 3550 }
     assert.deepEqual(parkView(game, '3', 100).victimCue, cue)
-    assert.deepEqual(parkView(game, '3', 3549).victimCue, cue)
-    assert.deepEqual(parkView(game, '3', 3849).victimCue, cue)
-    assert.equal(parkView(game, '3', 3850).victimCue, undefined)
-    if (mode === 'Hitman') {
-      assert.notEqual(game.targets.get('3'), '0')
-      assert.equal(victim.profile, 0)
-    } else {
-      assert.deepEqual(game.targets, targets)
-      assert.equal(victim.profile, 80)
-    }
+    assert.equal(parkView(game, '3', 100).targetReadyAt, mode === 'Hitman' ? 3100 : undefined)
+    assert.equal(victim.profile, 80)
     assert.match(interactInPark(game, '3', 549), /cannot interact/)
     advanceParkCombat(game, 549)
     assert.equal(victim.pose, 'pre-stun')
@@ -266,11 +270,31 @@ test('killer stuns last three seconds after pre-stun and reassign only in Hitman
     assert.equal(victim.pose, 'stun')
     assert.deepEqual(victim.combat, { startedAt: 550, endsAt: 3550 })
     assert.match(attackInPark(game, '0', '3', 600), /already reacting/)
+    advanceParkCombat(game, 3099)
+    if (mode === 'Hitman') {
+      assert.equal(parkView(game, '3', 3099).target, null)
+      assert.equal(parkView(game, '3', 3099).targetReadyAt, 3100)
+      assert.equal(parkView(game, '0', 3099).targetReadyAt, undefined)
+    }
+    advanceParkCombat(game, 3100)
+    if (mode === 'Hitman') {
+      const view = parkView(game, '3', 3100)
+      assert.ok(view.target)
+      assert.notEqual(view.target.name, 'Player 1')
+      assert.equal(view.targetReadyAt, undefined)
+      assert.equal(victim.profile, 0)
+    } else {
+      assert.deepEqual(game.targets, targets)
+      assert.equal(victim.profile, 80)
+    }
     advanceParkCombat(game, 3549)
     assert.equal(victim.pose, 'stun')
+    assert.deepEqual(parkView(game, '3', 3549).victimCue, cue)
     advanceParkCombat(game, 3550)
     assert.equal(victim.pose, 'idle')
     assert.equal(victim.mode, 'free')
+    assert.deepEqual(parkView(game, '3', 3849).victimCue, cue)
+    assert.equal(parkView(game, '3', 3850).victimCue, undefined)
   }
 })
 
@@ -286,20 +310,26 @@ test('Hitman scores the pre-kill Profile, then resets it for the new target', ()
     assert.equal(attackInPark(game, '0', '1', 10), undefined)
     const own = parkView(game, '0', 10)
     assert.equal(own.score, 100 + points)
-    const feedback = [{ kind: 'rating', text: rating, startedAt: 10 }]
+    const feedback = [{ kind: 'rating', text: rating, points, startedAt: 10 }]
     assert.deepEqual(own.combatFeedback, feedback)
-    assert.equal(own.profile, 0)
+    assert.equal(own.profile, profile)
+    assert.equal(own.target, null)
+    assert.equal(own.targetReadyAt, 3010)
     assert.equal(parkView(game, '1', 10).score, 0)
     assert.equal(parkView(game, '1', 10).combatFeedback, undefined)
     assert.equal(own.victimCue, undefined)
     const killedCue = { kind: 'killed', startedAt: 10, killerName: 'Player 1' }
     assert.deepEqual(parkView(game, '1', 10).victimCue, killedCue)
+    assert.deepEqual(parkView(game, '0', 9 + combatFeedbackMs).combatFeedback, feedback)
+    assert.deepEqual(parkView(game, '0', 10 + combatFeedbackMs).combatFeedback, [])
+    advanceParkCombat(game, 3010)
+    assert.equal(parkView(game, '0', 3010).profile, 0)
+    assert.equal(parkView(game, '0', 3010).targetReadyAt, undefined)
+    assert.ok(parkView(game, '0', 3010).target)
     advanceParkCombat(game, 3309)
     assert.equal(parkView(game, '1', 3309).life, 'respawning')
     assert.deepEqual(parkView(game, '1', 3309).victimCue, killedCue)
     assert.equal(parkView(game, '1', 3310).victimCue, undefined)
-    assert.deepEqual(parkView(game, '0', 9 + combatFeedbackMs).combatFeedback, feedback)
-    assert.deepEqual(parkView(game, '0', 10 + combatFeedbackMs).combatFeedback, [])
   }
   assert.deepEqual([0, 1, 2].map((index) => profileFill(33, index)), [1, 0, 0])
   assert.deepEqual([0, 1, 2].map((index) => profileFill(66, index)), [1, 1, 0])
@@ -416,6 +446,30 @@ test('an NPC penalty survives Hitman death and respawn with the same deadline', 
   assert.equal(parkView(game, '1', 5500).respawnedAt, undefined)
   assert.equal(respawned.penaltyUntil, 10_000)
   assert.equal(parkView(game, '1', 5500).penaltyNotices[0].area, respawned.area)
+})
+
+test('penalties expose visible models and share one sound with only the penalized player and their hunters', () => {
+  const game = emptyGame('Hitman')
+  const actor = game.players.get('0')
+  game.targets.set('2', actor.id)
+  game.players.get('2').area = 1
+  game.npcs.set('npc', { id: 'npc', area: 0, x: 204, y: 290, color: 'purple', pose: 'walk' })
+  assert.equal(attackInPark(game, actor.id, 'npc', 100), undefined)
+  const penalty = parkSoundsFor(game, actor.id, 0).find(({ kind }) => kind === 'penalty')
+  assert.ok(penalty.variant >= 0 && penalty.variant < 1)
+  assert.deepEqual(parkSoundsFor(game, '2', 1), [penalty])
+  assert.deepEqual(parkSoundsFor(game, '3', 0).filter(({ kind }) => kind === 'penalty'), [penalty])
+  assert.deepEqual(parkSoundsFor(game, '1', 0).map(({ kind }) => kind), ['kill'])
+
+  const actorSeenBy = (id, now) => parkView(game, id, now).actors.find(({ id }) => id === actor.id)
+  assert.equal(actorSeenBy('1', 100).penaltyGlowUntil, 10_100)
+  assert.equal(actorSeenBy('1', 10_100).penaltyGlowUntil, undefined)
+  assert.equal(actorSeenBy('2', 100), undefined)
+  actor.mode = 'hide'
+  assert.equal(actorSeenBy('1', 100), undefined)
+  actor.mode = 'free'
+  actor.area = 1
+  assert.equal(actorSeenBy('2', 100).penaltyGlowUntil, 10_100)
 })
 
 test('quick combat actions keep their own feedback timestamps and expire independently', () => {
@@ -570,7 +624,7 @@ test('killed crowd NPCs and walkers stop and return through their existing popul
 test('target assignments recover after departures, and solo play does not end automatically', () => {
   const game = emptyGame('Hitman')
   game.players.delete('1')
-  refreshParkTargets(game)
+  refreshParkTargets(game, 0)
   assert.notEqual(game.targets.get('0'), '1')
   assert.equal(game.targets.has('1'), false)
   const last = emptyGame('last_man_standing', 2)
