@@ -6,6 +6,7 @@ import argparse
 import json
 from collections import deque
 from pathlib import Path
+from statistics import median_low
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageSequence
 
@@ -116,10 +117,14 @@ def actor_atlas(color, pose, sources, body_height):
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
     combat = pose in {"kill", "punch", "death", "pre-stun", "stun"}
-    if combat:
-        # A common crop keeps limbs and collapsing bodies from being recentered each frame.
+    fixed_crop = combat or pose == "phone-one"
+    if fixed_crop:
+        # A common crop preserves the sprite's origin across frames.
+        # Phone One stands still. Its usual foot row excludes stray pixels under the shoes.
+        bottoms = [b[3] for b in bounds]
+        bottom = median_low(bottoms) if pose == "phone-one" else max(bottoms)
         crop = (min(b[0] for b in bounds), min(b[1] for b in bounds),
-                max(b[2] for b in bounds), max(b[3] for b in bounds))
+                max(b[2] for b in bounds), bottom)
         anchor_x = (bounds[0][0] + bounds[0][2]) / 2
         reach = max(anchor_x - crop[0], crop[2] - anchor_x)
         scale = min(body_height / (crop[3] - crop[1]), 76 / reach)
@@ -139,7 +144,7 @@ def actor_atlas(color, pose, sources, body_height):
         if model.width > 156 or model.height > 132:
             raise ValueError(f"{color}/{pose} exceeds the gameplay frame")
         cell = Image.new("RGBA", (160, 136))
-        left_offset = round(80 - (anchor_x - left) * scale) if combat else (160 - model.width) // 2
+        left_offset = round(80 - (anchor_x - left) * scale) if fixed_crop else (160 - model.width) // 2
         # Keep the lowest body pixel on the ground, including the fallen corpse.
         ground_offset = round((bottom - original[3]) * scale) if combat else 0
         cell.paste(model, (left_offset, 132 - model.height + ground_offset))

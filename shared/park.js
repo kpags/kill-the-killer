@@ -6,6 +6,7 @@ export const designHeight = 357
 export const standingHeight = 83
 export const walkSpeed = 72
 export const sprintSpeed = 121
+export const gameplayFeedbackMs = 2000
 const edgePadding = 45
 const spotRange = 21
 
@@ -113,6 +114,12 @@ export function constrain(area, x, y) {
   x = Math.max(area.left, Math.min(area.right, x))
   const [top, bottom] = groundRange(area, x)
   return { x, y: Math.max(top, Math.min(bottom, y)) }
+}
+
+export function randomGroundPoint(area, random) {
+  const x = area.left + random() * (area.right - area.left)
+  const [top, bottom] = groundRange(area, x)
+  return { x, y: top + random() * (bottom - top) }
 }
 
 export function hidingPose(area, spot) {

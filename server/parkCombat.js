@@ -1,9 +1,9 @@
-import { areas, constrain, groundRange } from '../shared/park.js'
+import { areas, constrain, randomGroundPoint } from '../shared/park.js'
 import { animationDuration, attackRange, combatFeedbackDuration, deathFadeMs, inAttackRange, isLiving,
   npcPenaltyMs, penaltyNoticeLimit, respawnDelayMs, stunMs, targetSearchMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideTransitionMs, profileBarSize, profileKillAward } from '../shared/profile.js'
 import { queueNpcPanic } from './parkNpcs.js'
-import { queueParkSound, queuePenaltySound } from './parkSounds.js'
+import { queueParkSound, setPenaltySound } from './parkSounds.js'
 
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const pick = (values, random) => values[Math.floor(random() * values.length)] ?? null
@@ -20,7 +20,7 @@ function applyNpcPenalty(game, actor, now) {
     .filter(({ playerId, expiresAt }) => expiresAt > now && game.players.has(playerId))
     .slice(1 - penaltyNoticeLimit)
   game.penaltyNotices.push({ id: ++game.penaltySequence, playerId: actor.id, expiresAt: actor.penaltyUntil })
-  queuePenaltySound(game, actor.id)
+  setPenaltySound(game, actor)
 }
 
 function setTarget(game, actor, targetId, initial = false) {
@@ -129,7 +129,6 @@ export function attackInPark(game, playerId, actorId, now) {
     if (isNpc) {
       adjustProfile(actor, -20)
       applyNpcPenalty(game, actor, now)
-      addCombatFeedback(actor, 'penalty', 'Penalty', now)
     }
     if (isTarget && lastManStanding) {
       addCombatFeedback(actor, 'target-killed', 'Target\nKilled', now)
@@ -165,13 +164,10 @@ export function attackInPark(game, playerId, actorId, now) {
 }
 
 function respawn(game, actor, now) {
-  const areaIndex = Math.floor(game.random() * areas.length)
-  const area = areas[areaIndex]
-  const x = area.left + game.random() * (area.right - area.left)
-  const [top, bottom] = groundRange(area, x)
+  const area = Math.floor(game.random() * areas.length)
   releaseActivity(actor)
   Object.assign(actor, {
-    area: areaIndex, x, y: top + game.random() * (bottom - top),
+    area, ...randomGroundPoint(areas[area], game.random),
     life: 'alive', pose: 'idle', mode: 'free', combat: null,
     vanishesAt: null, respawnAt: null, respawnedAt: now, stamina: 100, profile: profileBarSize, profileHideMs: 0,
     recoveryMs: 0, exhausted: false, generation: (actor.generation ?? 0) + 1,

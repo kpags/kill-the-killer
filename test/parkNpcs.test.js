@@ -88,7 +88,7 @@ test('a surviving solo crowd member uses a phone while an earlier death reaction
   const actor = game.players.get('attacker')
   const [first, second] = [...game.npcs.values()]
   assert.equal(first.crowd.group, second.crowd.group)
-  Object.assign(actor, { x: first.x, y: first.y })
+  Object.assign(actor, { area: first.area, x: first.x, y: first.y })
   assert.equal(attackInPark(game, actor.id, first.id, 10), undefined)
   assert.match(second.pose, /^phone-/)
   const panic = game.npcPanics.get(0)

@@ -11,6 +11,11 @@ function createEmptyPark(players) {
   const game = createParkSession(players)
   game.npcs.clear()
   game.walkers.length = 0
+  const points = [[130, 290], [215, 311], [338, 290]]
+  for (const [index, actor] of [...game.players.values()].entries()) {
+    const [x, y] = points[index]
+    Object.assign(actor, { area: 0, x, y })
+  }
   return game
 }
 
@@ -90,19 +95,30 @@ test('the profile meter follows Park behavior rates and remains between 0 and 10
   assert.equal(tick(500, 1, true), 0)
 })
 
-test('the six roster seats get distinct colors and valid Main spawns', () => {
-  const game = createEmptyPark(roster(6))
-  const actors = [...game.players.values()]
-  assert.deepEqual(actors.map(({ color }) => color).sort(), [...colors].sort())
-  assert.equal(new Set(actors.map(({ x, y }) => `${x},${y}`)).size, 6)
-  for (const { area, x, y } of actors) {
-    assert.equal(area, 0)
-    assert.deepEqual(constrain(areas[0], x, y), { x, y })
+test('both modes randomly spawn humans and bots in distinct playable areas', () => {
+  const indices = areas.map((_, index) => index)
+  for (const mode of ['last_man_standing', 'Hitman']) {
+    for (const count of [1, 3, 6]) {
+      for (const [draw, expectedAreas] of [[0.01, indices], [0.99, [...indices].reverse()]]) {
+        const game = createParkSession(roster(count), () => draw, mode)
+        const actors = [...game.players.values()]
+        assert.deepEqual(actors.map(({ area }) => area), expectedAreas.slice(0, count))
+        assert.equal(new Set(actors.map(({ color }) => color)).size, count)
+        for (const { area, x, y } of actors) {
+          assert.deepEqual(constrain(areas[area], x, y), { x, y })
+        }
+        if (count === 6) {
+          assert.deepEqual(actors.map(({ color }) => color).sort(), [...colors].sort())
+          const bot = actors.at(-1)
+          const { area, x, y } = bot
+          setParkInput(bot, { x: 1, y: 0, sprint: true }, 1)
+          stepPark(game, 50, 51)
+          assert.equal(bot.pose, 'idle')
+          assert.deepEqual([bot.area, bot.x, bot.y], [area, x, y])
+        }
+      }
+    }
   }
-  const bot = actors.at(-1)
-  setParkInput(bot, { x: 1, y: 0, sprint: true }, 1)
-  stepPark(game, 50, 51)
-  assert.equal(bot.pose, 'idle')
 })
 
 test('movement follows area edges in order and leaves stationary bots behind', () => {
@@ -207,9 +223,10 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(player.mode, 'sit')
   interactInPark(game, player.id, 2)
   assert.equal(player.pose, 'idle')
-  Object.assign(player, { x: 426, y: 278 })
+  Object.assign(player, { area: 3, x: 120, y: 274 })
   interactInPark(game, player.id, 3)
   assert.equal(player.mode, 'inspect')
+  assert.equal(parkView(game, player.id, 3).spotId, 'interact-A')
   interactInPark(game, player.id, 4)
   Object.assign(player, { area: 3, x: 214, y: 275 })
   interactInPark(game, player.id, 5)
@@ -228,6 +245,26 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   stepPark(game, 50, 10010)
   assert.equal(player.mode, 'free')
   assert.equal(parkView(game, '1', 10010).actors.length, 2)
+})
+
+test('the ice cream stall consumes immediately and only confirms to the nearby player', () => {
+  const game = createEmptyPark(roster())
+  const player = game.players.get('0')
+  Object.assign(player, { x: 426, y: 311 })
+  interactInPark(game, player.id, 1)
+  assert.equal(parkView(game, player.id, 1).consumption, undefined)
+
+  Object.assign(player, { y: 278, pose: 'phone-one', mode: 'action', actionStartedAt: 1 })
+  interactInPark(game, player.id, 2)
+  const view = parkView(game, player.id, 2)
+  assert.equal(view.mode, 'free')
+  assert.equal(view.actors.find(({ id }) => id === player.id).pose, 'idle')
+  assert.deepEqual(view.consumption, { item: 'Ice cream', startedAt: 2 })
+  assert.equal(parkView(game, '1', 2).consumption, undefined)
+
+  interactInPark(game, player.id, 3)
+  assert.equal(parkView(game, player.id, 2002).consumption.startedAt, 3)
+  assert.equal(parkView(game, player.id, 2003).consumption, undefined)
 })
 
 test('bench slots fill independently and free up when a player stands', () => {

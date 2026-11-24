@@ -1,5 +1,5 @@
 import metadata from '../assets/gameplay/atlases.json'
-import { areas, designHeight, designWidth, hidingPose, standingHeight } from '../shared/park.js'
+import { areas, designHeight, designWidth, gameplayFeedbackMs, hidingPose, standingHeight } from '../shared/park.js'
 import { combatCueFadeMs, combatFeedbackDuration, combatPlaybackRate, deathOpacity, oneShotPoses,
   npcPenaltyMs, penaltyFadeMs, targetKilledSlideMs } from '../shared/combat.js'
 import { frameAt, hoverOpacity, pickModel } from './parkPicking.js'
@@ -12,20 +12,23 @@ const playerShadowColors = ['#ff7096', '#ffd568', '#8cefaf', '#74dfff', '#b69bff
 const narrowSceneWidth = areas[0].width
 const narrowViewport = window.matchMedia('(max-width: 640px)')
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-const feedbackColors = { penalty: '#ff4545', rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff' }
+const feedbackColors = { rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff', information: '#ffffff' }
 const penaltyGlowPadding = 22
 const penaltyGlowColor = '#ff1737'
 
-function paintCombatFeedback(ctx, feedback, head, now, width) {
-  const stackSpacing = feedback.some(({ kind, points }) => kind === 'target-killed' || points != null) ? 42 : 16
-  let targetLabelTop = null
+function paintFeedback(ctx, feedback, head, now, width) {
+  const hasInformation = feedback.some(({ kind }) => kind === 'information')
+  const hasTwoLines = feedback.some(({ kind, points }) => kind === 'target-killed' || points != null)
+  const stackSpacing = hasTwoLines ? 42 : hasInformation ? 22 : 16
+  let feedbackTop = null
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
   ctx.strokeStyle = '#000'
   for (const [index, { kind, text, startedAt, points }] of feedback.entries()) {
     const age = Math.max(0, now - startedAt)
-    const duration = combatFeedbackDuration(kind)
+    const information = kind === 'information'
+    const duration = information ? gameplayFeedbackMs : combatFeedbackDuration(kind)
     if (age >= duration) continue
     const targetKilled = kind === 'target-killed'
     const scoredKill = kind === 'rating' && points != null
@@ -37,17 +40,19 @@ function paintCombatFeedback(ctx, feedback, head, now, width) {
     const top = targetKilled ? head.y + 12 - 56 * slide : head.y - 44 - lift
     const stack = (feedback.length - index - 1) * stackSpacing
     const y = Math.max(12, top - stack - (scoredKill ? lineSpacing : 0))
-    if (targetKilled) targetLabelTop = Math.min(targetLabelTop ?? Infinity, y - 15)
+    if (targetKilled || hasInformation) feedbackTop = Math.min(feedbackTop ?? Infinity, y - 15)
     ctx.font = targetKilled ? '800 18px system-ui, sans-serif' : '800 15px system-ui, sans-serif'
-    ctx.lineWidth = targetKilled ? 10 : 3
-    ctx.globalAlpha = targetKilled ? Math.min(1, (duration - age) / combatCueFadeMs) : 1 - progress
+    ctx.lineWidth = targetKilled ? 10 : information ? 6 : 3
+    ctx.globalAlpha = targetKilled || information ? Math.min(1, (duration - age) / combatCueFadeMs) : 1 - progress
     ctx.fillStyle = feedbackColors[kind]
-    const inset = Math.max(...lines.map((line) => ctx.measureText(line).width / 2)) + ctx.lineWidth / 2 + 2
+    const maxTextWidth = Math.max(1, width - ctx.lineWidth - 4)
+    const textWidth = Math.min(maxTextWidth, Math.max(...lines.map((line) => ctx.measureText(line).width)))
+    const inset = (textWidth + ctx.lineWidth) / 2 + 2
     const x = Math.max(inset, Math.min(width - inset, head.x))
-    for (const [lineIndex, line] of lines.entries()) ctx.strokeText(line, x, y + lineIndex * lineSpacing)
-    for (const [lineIndex, line] of lines.entries()) ctx.fillText(line, x, y + lineIndex * lineSpacing)
+    for (const [lineIndex, line] of lines.entries()) ctx.strokeText(line, x, y + lineIndex * lineSpacing, maxTextWidth)
+    for (const [lineIndex, line] of lines.entries()) ctx.fillText(line, x, y + lineIndex * lineSpacing, maxTextWidth)
   }
-  return targetLabelTop
+  return feedbackTop
 }
 
 function paintFrame(ctx, atlas, index, x = 0, y = 0) {
@@ -287,7 +292,7 @@ export function createParkRenderer(canvas, art) {
     }
   }
 
-  return function draw(state, time, playerId, showPrompt, pointer = null, pickAttack = false) {
+  return function draw(state, time, playerId, showPrompt, pointer = null, pickAttack = false, gameplayNotice = null) {
     const area = areas[state.area]
     const modelScale = atlasScale * area.modelScale
     const ratio = Math.min(2, window.devicePixelRatio || 1)
@@ -476,8 +481,19 @@ export function createParkRenderer(canvas, art) {
       ctx.restore()
     }
 
+    const { consumption } = state
+    let feedback = state.combatFeedback ?? []
+    if (consumption || gameplayNotice) {
+      feedback = [...feedback]
+      if (consumption) feedback.push({
+        kind: 'information', text: `${consumption.item} consumed`, startedAt: consumption.startedAt,
+      })
+      if (gameplayNotice) feedback.push({
+        kind: 'information', text: gameplayNotice.text, startedAt: serverNow - (time - gameplayNotice.startedAt),
+      })
+    }
     let head = null
-    if (player && (showPrompt || state.combatFeedback?.length)) {
+    if (player && (showPrompt || feedback.length)) {
       const atlas = player.atlas ?? art[`${player.color}-idle`]
       const headOffset = silhouette(atlas, player.frame ?? 0).head
       const playerScale = preview?.scale ?? modelScale
@@ -486,15 +502,15 @@ export function createParkRenderer(canvas, art) {
         y: (offsetY + (player.y + headOffset.y * playerScale) * scale) * canvas.clientHeight / height,
       }
     }
-    let targetLabelTop = null
-    if (head && state.combatFeedback?.length) {
+    let feedbackTop = null
+    if (head && feedback.length) {
       ctx.save()
       ctx.setTransform(width / canvas.clientWidth, 0, 0, height / canvas.clientHeight, 0, 0)
       ctx.filter = penaltyFilter
-      targetLabelTop = paintCombatFeedback(ctx, state.combatFeedback, head, serverNow, canvas.clientWidth)
+      feedbackTop = paintFeedback(ctx, feedback, head, serverNow, canvas.clientWidth)
       ctx.restore()
     }
     ctx.filter = 'none'
-    return { faded, head, hoveredId, attackId, serverNow, targetLabelTop, penaltyActive, penaltyStrength }
+    return { faded, head, hoveredId, attackId, serverNow, feedbackTop, penaltyActive, penaltyStrength }
   }
 }

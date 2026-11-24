@@ -1,5 +1,6 @@
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { areas } from '../shared/park.js'
+import { npcPenaltyMs } from '../shared/combat.js'
 import clickUrl from '../assets/sounds/menu/buttons/click.mp3'
 import hoverUrl from '../assets/sounds/menu/buttons/hover.mp3'
 import firstTrack from '../assets/musics/menu/one.mp3'
@@ -25,7 +26,13 @@ const combatTracks = Object.fromEntries(Object.entries(combatDirectories).map(([
     .map((path) => combatAssets[path]),
 ]))
 
-export function useGameAudio(settings, menuActive, parkArea) {
+function trackFor(kind, variant) {
+  const tracks = combatTracks[kind] ?? []
+  return tracks[Math.floor(variant * tracks.length)]
+}
+
+export function useGameAudio(settings, menuActive, park) {
+  const parkArea = computed(() => menuActive.value ? null : park.value?.area)
   const click = new Audio(clickUrl)
   const hover = new Audio(hoverUrl)
   const music = new Audio()
@@ -34,6 +41,7 @@ export function useGameAudio(settings, menuActive, parkArea) {
   const effectBuffers = new Map()
   const activeEffects = new Set()
   const fallbackEffects = new Set()
+  const penaltyEffects = new Map()
   click.preload = 'auto'
   hover.preload = 'auto'
   let context
@@ -53,6 +61,9 @@ export function useGameAudio(settings, menuActive, parkArea) {
       hover.volume = sfx / 100
       music.volume = musicLevel / 100
       for (const clip of fallbackEffects) clip.volume = sfx / 100
+      for (const { clip } of penaltyEffects.values()) {
+        if (clip) clip.volume = sfx / 100
+      }
     }
   }
 
@@ -130,12 +141,67 @@ export function useGameAudio(settings, menuActive, parkArea) {
     }
   }
 
+  function stopPenaltySound(id) {
+    const effect = penaltyEffects.get(id)
+    if (!effect) return
+    penaltyEffects.delete(id)
+    clearTimeout(effect.timer)
+    effect.stop?.()
+  }
+
+  function startPenaltySound({ id, variant, expiresAt }, serverTime) {
+    const url = trackFor('penalty', variant)
+    const remaining = expiresAt - serverTime
+    if (!url || remaining <= 0) return
+    const end = performance.now() + remaining
+    const effect = { timer: setTimeout(() => effect.stop?.(), remaining) }
+    penaltyEffects.set(id, effect)
+    const offset = (duration) => Math.max(0, (npcPenaltyMs - (end - performance.now())) / 1000) % duration
+    if (context) {
+      loadEffectBuffer(url).then((buffer) => {
+        const secondsLeft = (end - performance.now()) / 1000
+        if (penaltyEffects.get(id) !== effect || secondsLeft <= 0) return
+        const source = context.createBufferSource()
+        effect.stop = () => source.stop()
+        source.buffer = buffer
+        source.loop = true
+        source.connect(effectsGain)
+        source.onended = () => {
+          effect.stop = undefined
+          source.disconnect()
+        }
+        const start = context.currentTime
+        source.start(start, offset(buffer.duration))
+        source.stop(start + secondsLeft)
+      }).catch(() => {})
+      return
+    }
+    const clip = new Audio(url)
+    effect.clip = clip
+    effect.stop = () => clip.pause()
+    clip.volume = settings.value.sfx / 100
+    clip.loop = true
+    clip.addEventListener('loadedmetadata', () => {
+      if (penaltyEffects.get(id) === effect && clip.duration > 0) clip.currentTime = offset(clip.duration)
+    }, { once: true })
+    clip.play().catch(() => {})
+  }
+
+  function syncPenaltySounds() {
+    if (!activated) return
+    const state = menuActive.value ? null : park.value
+    const sounds = state?.penaltySounds ?? []
+    for (const id of penaltyEffects.keys()) {
+      if (!sounds.some((sound) => sound.id === id)) stopPenaltySound(id)
+    }
+    for (const sound of sounds) {
+      if (!penaltyEffects.has(sound.id)) startPenaltySound(sound, state.serverTime)
+    }
+  }
+
   function playCombatSounds(sounds) {
     if (!activated || menuActive.value || !settings.value.sfx) return
-    const urls = sounds.map(({ kind, variant }) => {
-      const tracks = combatTracks[kind] ?? []
-      return tracks[Math.floor(variant * tracks.length)]
-    }).filter(Boolean)
+    const urls = sounds.map(({ kind, variant }) => trackFor(kind, variant)).filter(Boolean)
     if (context) {
       const scope = audioScope
       Promise.all(urls.map((url) => loadEffectBuffer(url).catch(() => null))).then((buffers) => {
@@ -181,6 +247,7 @@ export function useGameAudio(settings, menuActive, parkArea) {
       setVolume()
       activated = true
       if (!menuActive.value) preloadCombatSounds()
+      syncPenaltySounds()
     }
     if (context && context.state !== 'running') context.resume().catch(() => {})
     if (playlist?.current) playMusic()
@@ -207,6 +274,7 @@ export function useGameAudio(settings, menuActive, parkArea) {
 
   watch(settings, () => { if (activated) setVolume() }, { flush: 'sync' })
   watch([menuActive, parkArea], selectPlaylist, { immediate: true, flush: 'sync' })
+  watch([menuActive, park], syncPenaltySounds, { flush: 'sync' })
 
   onMounted(() => {
     music.addEventListener('ended', startNextTrack)
@@ -223,6 +291,7 @@ export function useGameAudio(settings, menuActive, parkArea) {
     document.removeEventListener('pointerover', playHover)
     document.removeEventListener('click', playClick, true)
     stopCombatSounds()
+    for (const id of penaltyEffects.keys()) stopPenaltySound(id)
     for (const audio of [click, hover, music]) audio.pause()
     context?.close().catch(() => {})
   })

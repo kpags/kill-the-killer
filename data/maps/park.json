@@ -7,7 +7,8 @@
             "interactions": {
                 "A": {
                     "name": "Buy Ice Cream",
-                    "effect": "Opens a popup dialog showing 4 ice cream options; Mango, Cookies N Cream, Ube, and Chocolate. Players can select one and buy or exit.",
+                    "effect": "Automatically consume an ice cream when interacted.",
+                    "consumable": "Ice cream",
                     "type": {
                         "main": "store",
                         "sub": "food"

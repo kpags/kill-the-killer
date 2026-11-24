@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { areas } from '../shared/park.js'
+import { areas, gameplayFeedbackMs } from '../shared/park.js'
 import { combatCueFadeMs, killFlashMs, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
 import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
 import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
@@ -44,7 +44,9 @@ const killerCredit = computed(() => {
   return cue?.kind === 'killed' && cue.killerName ? `By ${cue.killerName}` : ''
 })
 const respawnCurtain = ref(null)
-const error = ref('')
+const loadError = ref('')
+const pauseError = ref('')
+const gameplayNotice = ref(null)
 const pauseScreen = ref(null)
 const pauseDialog = ref(null)
 const playerListOpen = ref(false)
@@ -93,6 +95,7 @@ const prompt = computed(() => {
       const nearby = spot.value
       if (!nearby) return props.state?.mode === 'action' ? 'Stop action' : null
       if (nearby.hiding) return 'Hide'
+      if (nearby.consumable) return nearby.name
       if (nearby.type.main === 'sitting') return 'Sit'
       if (nearby.type.sub === 'music') return 'Dance'
       return 'Inspect'
@@ -102,6 +105,7 @@ const prompt = computed(() => {
 
 let draw
 let frameId
+let noticeTimeout
 let repeatInput
 let disposed = false
 let fadedForeground = 0
@@ -136,15 +140,21 @@ function releaseMovement() {
   transmit()
 }
 
+function showGameplayNotice(text) {
+  if (disposed) return
+  clearTimeout(noticeTimeout)
+  gameplayNotice.value = { text, startedAt: performance.now() }
+  noticeTimeout = setTimeout(() => { gameplayNotice.value = null }, gameplayFeedbackMs)
+}
+
 async function interact() {
   if (pauseScreen.value || actionsOpen.value || activeCommand || !prompt.value || props.reconnecting) return
   activeCommand = true
-  error.value = ''
   release()
   try {
     await props.command('interact')
   } catch (failure) {
-    error.value = failure.message
+    showGameplayNotice(failure.message)
   } finally {
     activeCommand = false
   }
@@ -172,12 +182,11 @@ function toggleActions() {
 async function selectAction(label) {
   if (!actionsOpen.value || !canAct.value || activeCommand || props.reconnecting) return
   activeCommand = true
-  error.value = ''
   closeActions()
   try {
     await props.command('play_action', { action: label.toLowerCase() })
   } catch (failure) {
-    error.value = failure.message
+    showGameplayNotice(failure.message)
   } finally {
     activeCommand = false
   }
@@ -204,13 +213,12 @@ async function attack(event) {
   const { attackId } = draw(props.state, performance.now(), props.playerId, false, pointer, true)
   if (!attackId) return
   activeCommand = true
-  error.value = ''
   releaseMovement()
   refocus()
   try {
     await props.command('attack', { actorId: attackId })
   } catch (failure) {
-    error.value = failure.message
+    showGameplayNotice(failure.message)
   } finally {
     activeCommand = false
   }
@@ -222,11 +230,10 @@ async function spectate(event) {
   field.value = String(props.state.area)
   if (activeCommand || pauseScreen.value || props.reconnecting) return
   activeCommand = true
-  error.value = ''
   try {
     await props.command('spectate_area', { area: nextArea })
   } catch (failure) {
-    error.value = failure.message
+    showGameplayNotice(failure.message)
   } finally {
     activeCommand = false
   }
@@ -314,7 +321,7 @@ async function openPause() {
   if (pauseScreen.value || props.state?.winner) return
   closeActions()
   pauseScreen.value = 'pause'
-  error.value = ''
+  pauseError.value = ''
   clearHeldControls()
   pauseDialog.value.showModal()
   await nextTick()
@@ -349,12 +356,12 @@ function cancelPause() {
 async function exitGame() {
   if (exiting.value || props.reconnecting) return
   exiting.value = true
-  error.value = ''
+  pauseError.value = ''
   release()
   try {
     await props.leave()
   } catch (failure) {
-    error.value = failure.message
+    pauseError.value = failure.message
   } finally {
     exiting.value = false
   }
@@ -363,9 +370,9 @@ async function exitGame() {
 function render(now) {
   if (props.state) {
     const label = overheadPrompt.value
-    const { faded, head, hoveredId, serverNow, targetLabelTop, penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
+    const { faded, head, hoveredId, serverNow, feedbackTop, penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
-        pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer)
+        pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer, false, gameplayNotice.value)
     penaltyActive.value = penalized
     penaltyStrength.value = strength
     fadedForeground = faded
@@ -377,7 +384,7 @@ function render(now) {
         canvas.value.clientWidth - label.offsetWidth - inset,
         head.x - label.offsetWidth / 2,
       ))
-      const promptBottom = Math.min(head.y - 8, (targetLabelTop ?? Infinity) - 4)
+      const promptBottom = Math.min(head.y - 8, (feedbackTop ?? Infinity) - 4)
       const y = Math.max(inset, promptBottom - label.offsetHeight)
       label.style.transform = `translate3d(${x}px, ${y}px, 0)`
       label.style.visibility = 'visible'
@@ -426,12 +433,13 @@ onMounted(async () => {
     artReady.value = true
     frameId = requestAnimationFrame(render)
   } catch {
-    if (!disposed) error.value = 'Park artwork could not load.'
+    if (!disposed) loadError.value = 'Park artwork could not load.'
   }
 })
 
 onUnmounted(() => {
   disposed = true
+  clearTimeout(noticeTimeout)
   release()
   cancelAnimationFrame(frameId)
   window.clearInterval(repeatInput)
@@ -540,11 +548,20 @@ defineExpose({ readState })
           <li v-for="notice in state.penaltyNotices" :key="notice.id">{{ notice.name }} at {{ areas[notice.area].name }}</li>
         </ul>
       </aside>
-      <p v-if="error || reconnecting || !state || !artReady" class="park-notice" role="status">
-        {{ error || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
+      <p v-if="loadError || reconnecting || !state || !artReady" class="park-notice" role="status">
+        {{ loadError || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
       </p>
+      <div v-if="penaltyActive" class="park-penalty-status" role="status">
+        <p class="park-penalty-title">IN PENALTY</p>
+        <ul class="park-penalty-effects">
+          <li>Blurred/Distorted Vision</li>
+          <li>Location Exposed to All</li>
+        </ul>
+      </div>
       <div class="park-feedback-status" role="status" aria-atomic="false" aria-relevant="additions">
         <span v-for="feedback in state?.combatFeedback" :key="feedback.startedAt">{{ feedback.text }}</span>
+        <span v-if="state?.consumption" :key="state.consumption.startedAt">{{ state.consumption.item }} consumed</span>
+        <span v-if="gameplayNotice && !state?.spectating" :key="gameplayNotice.startedAt">{{ gameplayNotice.text }}</span>
       </div>
       <section v-if="inspecting" ref="focusPanel" class="park-panel" tabindex="-1" :aria-label="spot.name">
         <h2>{{ spot.name }}</h2>
@@ -561,6 +578,7 @@ defineExpose({ readState })
           :disabled="reconnecting || Boolean(pauseScreen)" @change="spectate">
           <option v-for="(place, index) in areas" :key="place.id" :value="index">{{ place.name }}</option>
         </select>
+        <span v-if="state.spectating && gameplayNotice" role="status">{{ gameplayNotice.text }}</span>
       </section>
     </div>
 
@@ -640,7 +658,7 @@ defineExpose({ readState })
         <button ref="settingsButton" type="button" class="glass-button park-button" :disabled="exiting"
           @click="openPauseSettings">Settings</button>
         <button type="button" class="glass-button park-button" :disabled="exiting || reconnecting" @click="exitGame">Exit</button>
-        <p v-if="error || reconnecting" class="park-pause-status" role="status">{{ error || 'Reconnecting…' }}</p>
+        <p v-if="pauseError || reconnecting" class="park-pause-status" role="status">{{ pauseError || 'Reconnecting…' }}</p>
       </section>
     </dialog>
 
@@ -877,7 +895,7 @@ defineExpose({ readState })
 }
 
 .park-penalized > :not(.park-stage, .park-victim-cue, .park-winner),
-.park-penalized .park-stage > :not(canvas),
+.park-penalized .park-stage > :not(canvas, .park-penalty-status),
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
 }
@@ -901,6 +919,56 @@ defineExpose({ readState })
   z-index: 2;
   background: #000;
   pointer-events: none;
+}
+
+.park-penalty-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 1;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 5px;
+  pointer-events: none;
+  color: #fff;
+  text-align: center;
+}
+
+.park-penalty-title {
+  margin: 0;
+  font-size: clamp(1.75rem, 5vw, 3rem);
+  font-weight: 900;
+  line-height: 1.1;
+  -webkit-text-stroke: clamp(5px, 0.9vw, 9px) #000;
+  paint-order: stroke fill;
+  animation: park-penalty-blink 1.2s step-end infinite;
+}
+
+.park-penalty-effects {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: clamp(0.8125rem, 2.8vw, 1.0625rem);
+  font-weight: 700;
+  line-height: 1.2;
+  -webkit-text-stroke: 3px #000;
+  paint-order: stroke fill;
+}
+
+.park-notice + .park-penalty-status { top: 48px; }
+
+@keyframes park-penalty-blink {
+  0%, 100% { opacity: 1; }
+  65% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .park-penalty-title { animation: none; }
 }
 
 .park-penalty-feed {

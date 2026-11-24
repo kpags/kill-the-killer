@@ -1,32 +1,32 @@
 import { randomInt } from 'node:crypto'
-import { areas, colors, constrain, nearbySpot, sprintSpeed, walkSpeed } from '../shared/park.js'
+import { areas, colors, constrain, gameplayFeedbackMs, nearbySpot, randomGroundPoint, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
 import { combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
+import { penaltySoundsFor } from './parkSounds.js'
 
 const staminaLimit = 100
 const profileRange = 36
 const hideLimit = 10_000
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
-const mainSpawns = [[130, 290], [215, 311], [338, 290], [70, 311], [277, 290], [411, 311]]
 const parkActions = ['phone', 'talk', 'dance', 'scream']
 const actionVariants = ['one', 'two', 'three']
 
 export function createParkSession(players, random = Math.random, modeId = 'last_man_standing') {
   const palette = [...colors]
-  const roster = new Map(players.map((player, index) => {
+  const spawnAreas = areas.map((_, index) => index)
+  const roster = new Map(players.map((player) => {
     const [color] = palette.splice(randomInt(palette.length), 1)
-    const [x, y] = mainSpawns[index]
+    const [area] = spawnAreas.splice(Math.floor(random() * spawnAreas.length), 1)
     return [player.id, {
       id: player.id,
       name: player.name,
       color,
       isBot: player.isBot,
-      area: 0,
-      x,
-      y,
+      area,
+      ...randomGroundPoint(areas[area], random),
       facing: 1,
       pose: 'idle',
       mode: 'free',
@@ -55,7 +55,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
   const game = {
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
-    soundEvents: new Map(), privateSoundEvents: new Map(),
+    soundEvents: new Map(),
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
@@ -135,6 +135,12 @@ export function interactInPark(game, playerId, now) {
 
   const spot = nearbySpot(actor)
   if (!spot) return
+  if (spot.consumable) {
+    stopParkInput(actor)
+    actor.pose = 'idle'
+    actor.consumption = { item: spot.consumable, startedAt: now }
+    return
+  }
   const isSeat = spot.type.main === 'sitting'
   const seat = isSeat ? claimSeat(game, actor, spot) : null
   if (isSeat && !seat) return `${spot.name} is full.`
@@ -250,6 +256,7 @@ export function parkView(game, playerId, now) {
   const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
   const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
   const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
+  const { consumption } = actor
   const penaltyUntil = actor.penaltyUntil > now ? actor.penaltyUntil : undefined
   const penaltyNotices = penaltyUntil ? [] : game.penaltyNotices.flatMap(({ id, playerId, expiresAt }) => {
     const penalized = game.players.get(playerId)
@@ -266,6 +273,7 @@ export function parkView(game, playerId, now) {
     area,
     serverTime: now,
     penaltyUntil,
+    penaltySounds: penaltySoundsFor(game, playerId, now),
     penaltyFadeAt: !penaltyUntil && actor.penaltyUntil + penaltyFadeMs > now ? actor.penaltyUntil : undefined,
     penaltyNotices,
     killFlashAt: actor.killFlashAt != null && now - actor.killFlashAt < killFlashMs ? actor.killFlashAt : undefined,
@@ -282,6 +290,8 @@ export function parkView(game, playerId, now) {
       ? { name: player.name, score: player.score }
       : { name: player.name, eliminated: !isLiving(player) }),
     victimCue: actor.victimCue && now < victimCueEndsAt(actor.victimCue) ? actor.victimCue : undefined,
+    consumption: consumption && isLiving(actor) && !game.winner && now - consumption.startedAt < gameplayFeedbackMs
+      ? consumption : undefined,
     combatFeedback: actors.includes(actor) ? actor.combatFeedback
       ?.filter(({ area: eventArea, kind, startedAt }) => eventArea === area && now - startedAt < combatFeedbackDuration(kind))
       .map(({ area, ...feedback }) => feedback) : undefined,

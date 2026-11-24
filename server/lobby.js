@@ -5,7 +5,6 @@ import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from 
 import { winnerDisplayMs } from '../shared/combat.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark, stopParkInput } from './parkSession.js'
 import { attackInPark, spectateInPark } from './parkCombat.js'
-import { parkSoundsFor } from './parkSounds.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const modeIds = Object.keys(JSON.parse(readFileSync(new URL('../data/game_modes.json', import.meta.url), 'utf8')))
@@ -25,6 +24,7 @@ export function createLobbyServer({
   allowedOrigins = [],
   reconnectGraceMs = 10_000,
   availableMapIds = mapIds,
+  createGame = createParkSession,
 } = {}) {
   const rooms = new Map()
   const sessions = new Map()
@@ -81,13 +81,12 @@ export function createLobbyServer({
     for (const player of room.slots) {
       if (player?.socket && player.socket.bufferedAmount < 32_768) {
         const state = parkView(room.game, player.id, now)
-        const sounds = parkSoundsFor(room.game, player.id, state.area)
+        const sounds = room.game.soundEvents.get(state.area)
         send(player.socket, { type: 'park', state })
-        if (sounds.length) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
+        if (sounds?.length) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
       }
     }
     room.game.soundEvents.clear()
-    room.game.privateSoundEvents.clear()
   }
 
   function detach(player) {
@@ -217,7 +216,7 @@ export function createLobbyServer({
       case 'start':
         if (!isHost) return reject('Only the host can start.')
         if (room.selectedMapId !== 'park') return reject('This map is unavailable for gameplay.')
-        room.game = createParkSession(room.slots.filter(Boolean), Math.random, room.selectedModeId)
+        room.game = createGame(room.slots.filter(Boolean), Math.random, room.selectedModeId)
         broadcast(room)
         broadcastPark(room)
         return result()

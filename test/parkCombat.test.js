@@ -5,7 +5,6 @@ import { animationDuration, combatFeedbackMs, deathOpacity, killFlashMs } from '
 import { profileFill } from '../shared/profile.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark } from '../server/parkSession.js'
 import { advanceParkCombat, attackInPark, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
-import { parkSoundsFor } from '../server/parkSounds.js'
 
 const deathDuration = 450 / 1.3
 const corpseDuration = deathDuration + 2000
@@ -18,7 +17,7 @@ function emptyGame(mode = 'last_man_standing', count = 4) {
   game.walkers.length = 0
   game.targetOrder = [...game.players.keys()]
   game.targets = new Map(game.targetOrder.map((id, index, ids) => [id, ids[(index + 1) % ids.length]]))
-  for (const actor of game.players.values()) Object.assign(actor, { x: 200, y: 290 })
+  for (const actor of game.players.values()) Object.assign(actor, { area: 0, x: 200, y: 290 })
   refreshParkTargets(game, 0, true)
   return game
 }
@@ -350,7 +349,9 @@ test('NPC kills deduct Profile without awarding points and preserve the hiding e
   assert.equal(attackInPark(game, '0', npc.id, 1000), undefined)
   assert.equal(actor.profile, 25)
   assert.equal(actor.score, 0)
-  assert.deepEqual(parkView(game, '0', 1000).combatFeedback, [{ kind: 'penalty', text: 'Penalty', startedAt: 1000 }])
+  const penalized = parkView(game, '0', 1000)
+  assert.equal(penalized.penaltyUntil, 11_000)
+  assert.equal(penalized.combatFeedback, undefined)
   assert.equal(parkView(game, '1', 1000).combatFeedback, undefined)
   assert.equal(game.targets.get('0'), target)
   stepPark(game, 200, 1200)
@@ -455,11 +456,14 @@ test('penalties expose visible models and share one sound with only the penalize
   game.players.get('2').area = 1
   game.npcs.set('npc', { id: 'npc', area: 0, x: 204, y: 290, color: 'purple', pose: 'walk' })
   assert.equal(attackInPark(game, actor.id, 'npc', 100), undefined)
-  const penalty = parkSoundsFor(game, actor.id, 0).find(({ kind }) => kind === 'penalty')
+  const [penalty] = parkView(game, actor.id, 100).penaltySounds
   assert.ok(penalty.variant >= 0 && penalty.variant < 1)
-  assert.deepEqual(parkSoundsFor(game, '2', 1), [penalty])
-  assert.deepEqual(parkSoundsFor(game, '3', 0).filter(({ kind }) => kind === 'penalty'), [penalty])
-  assert.deepEqual(parkSoundsFor(game, '1', 0).map(({ kind }) => kind), ['kill'])
+  assert.equal(penalty.expiresAt, 10_100)
+  assert.deepEqual(parkView(game, '2', 100).penaltySounds, [penalty])
+  assert.deepEqual(parkView(game, '3', 100).penaltySounds, [penalty])
+  assert.equal(parkView(game, '1', 100).penaltySounds, undefined)
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['kill'])
+  game.soundEvents.clear()
 
   const actorSeenBy = (id, now) => parkView(game, id, now).actors.find(({ id }) => id === actor.id)
   assert.equal(actorSeenBy('1', 100).penaltyGlowUntil, 10_100)
@@ -470,6 +474,10 @@ test('penalties expose visible models and share one sound with only the penalize
   actor.mode = 'free'
   actor.area = 1
   assert.equal(actorSeenBy('2', 100).penaltyGlowUntil, 10_100)
+  assert.deepEqual(parkView(game, actor.id, 10_099).penaltySounds, [penalty])
+  assert.deepEqual(parkView(game, '2', 10_099).penaltySounds, [penalty])
+  assert.equal(parkView(game, actor.id, 10_100).penaltySounds, undefined)
+  assert.equal(parkView(game, '2', 10_100).penaltySounds, undefined)
 })
 
 test('quick combat actions keep their own feedback timestamps and expire independently', () => {

@@ -47,8 +47,7 @@ const connection = createRoomConnection(async (reason) => {
 }, (sounds) => playCombatSounds(sounds))
 const { room, playerId, park, reconnecting } = connection
 const menuActive = computed(() => room.value?.phase !== 'park')
-const playCombatSounds = useGameAudio(audioSettings, menuActive,
-  computed(() => menuActive.value ? null : park.value?.area))
+const playCombatSounds = useGameAudio(audioSettings, menuActive, park)
 
 watch(room, (value, previous) => {
   if (value && !previous) lobby.value?.focusHeading()

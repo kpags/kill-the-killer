@@ -3,7 +3,18 @@ import { once } from 'node:events'
 import test from 'node:test'
 import { WebSocket } from 'ws'
 import { createLobbyServer } from '../server/lobby.js'
+import { createParkSession } from '../server/parkSession.js'
 import { areas, constrain } from '../shared/park.js'
+
+function createGameWithPlayersInMain(players, random, modeId) {
+  const game = createParkSession(players, random, modeId)
+  const positions = [[130, 290], [215, 311], [338, 290]]
+  for (const [index, actor] of [...game.players.values()].entries()) {
+    const [x, y] = positions[index]
+    Object.assign(actor, { area: 0, x, y })
+  }
+  return game
+}
 
 async function setup(context, options) {
   const server = createLobbyServer({ port: 0, host: '127.0.0.1', reconnectGraceMs: 500, ...options })
@@ -94,7 +105,7 @@ test('rooms synchronize human numbering and enforce slot and player permissions'
 })
 
 test('Actions wheel commands broadcast the same chosen clip and stop on movement', { timeout: 5000 }, async (context) => {
-  const connect = await setup(context)
+  const connect = await setup(context, { createGame: createGameWithPlayersInMain })
   const host = await connect()
   const created = await host.command('create')
   const guest = await connect()
@@ -119,7 +130,7 @@ test('Actions wheel commands broadcast the same chosen clip and stop on movement
 })
 
 test('the penalty clip reaches only the penalized player and their assigned hunter', { timeout: 5000 }, async (context) => {
-  const connect = await setup(context)
+  const connect = await setup(context, { createGame: createGameWithPlayersInMain })
   const host = await connect()
   const created = await host.command('create')
   const guests = []
@@ -139,22 +150,27 @@ test('the penalty clip reaches only the penalized player and their assigned hunt
   const victim = initial.actors.find(({ id, x, y }) => !playerIds.has(id) && Math.hypot(x - own.x, y - own.y) <= 19)
   assert.ok(victim)
 
-  const senderSounds = []
-  host.socket.on('message', (raw) => {
-    const message = JSON.parse(raw.toString())
-    if (message.type === 'park_sounds') senderSounds.push(...message.sounds)
-  })
   assert.equal((await host.command('attack', { actorId: victim.id })).error, undefined)
+  const hunter = guests[hunterIndex].client
   const bystander = guests[1 - hunterIndex].client
-  const glowing = await bystander.waitFor(({ state }) =>
-    state?.actors.find(({ id }) => id === created.playerId)?.penaltyGlowUntil > state?.serverTime)
+  const [ownPenalty, hunterPenalty, glowing] = await Promise.all([
+    host.waitFor(({ state }) => state?.penaltySounds?.length),
+    hunter.waitFor(({ state }) => state?.penaltySounds?.length),
+    bystander.waitFor(({ state }) =>
+      state?.actors.find(({ id }) => id === created.playerId)?.penaltyGlowUntil > state?.serverTime),
+  ])
+  assert.deepEqual(hunterPenalty.state.penaltySounds, ownPenalty.state.penaltySounds)
+  assert.equal(ownPenalty.state.penaltySounds[0].expiresAt, ownPenalty.state.penaltyUntil)
   assert.equal(glowing.state.penaltyUntil, undefined)
+  assert.equal(glowing.state.penaltySounds, undefined)
   const audio = ({ type, sounds }) => type === 'park_sounds' && sounds.some(({ kind }) => kind === 'kill')
-  const hunterAudio = await guests[hunterIndex].client.waitFor(audio)
-  const bystanderAudio = await bystander.waitFor(audio)
-  assert.deepEqual(hunterAudio.sounds, senderSounds)
-  assert.deepEqual(senderSounds.map(({ kind }) => kind), ['kill', 'penalty'])
-  assert.deepEqual(bystanderAudio.sounds, senderSounds.filter(({ kind }) => kind === 'kill'))
+  const [hunterAudio, bystanderAudio] = await Promise.all([hunter.waitFor(audio), bystander.waitFor(audio)])
+  assert.deepEqual(hunterAudio.sounds, bystanderAudio.sounds)
+  assert.deepEqual(hunterAudio.sounds.map(({ kind }) => kind), ['kill'])
+  const resumed = await connect()
+  assert.equal((await resumed.command('resume', { token: created.token })).error, undefined)
+  const restored = await resumed.waitFor(({ state }) => state?.penaltySounds?.length)
+  assert.deepEqual(restored.state.penaltySounds, ownPenalty.state.penaltySounds)
 })
 
 async function approach(client, playerId, victimId) {
@@ -177,7 +193,7 @@ async function approach(client, playerId, victimId) {
 }
 
 test('combat broadcasts the same winner and returns all players home three seconds later', { timeout: 12_000 }, async (context) => {
-  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const connect = await setup(context, { reconnectGraceMs: 3000, createGame: createGameWithPlayersInMain })
   const host = await connect()
   const created = await host.command('create')
   const guest = await connect()
@@ -247,7 +263,7 @@ test('combat broadcasts the same winner and returns all players home three secon
 })
 
 test('Hitman reconnect during death recovers the five-second respawn and a green-boundary spawn', { timeout: 12_000 }, async (context) => {
-  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const connect = await setup(context, { reconnectGraceMs: 3000, createGame: createGameWithPlayersInMain })
   const host = await connect()
   const created = await host.command('create')
   await host.command('select_mode', { modeId: 'Hitman' })
@@ -302,7 +318,7 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
 })
 
 test('reconnecting a stunned killer preserves the shared stun deadline and target', { timeout: 10_000 }, async (context) => {
-  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const connect = await setup(context, { reconnectGraceMs: 3000, createGame: createGameWithPlayersInMain })
   const host = await connect()
   const created = await host.command('create')
   const members = []
@@ -439,17 +455,20 @@ test('host Start opens Park for the current roster and reconnect recovers the sa
   })
   assert.equal((await host.command('start')).error, undefined)
   const game = await guest.waitFor(({ type }) => type === 'park')
+  const hostGame = await hostStart
+  assert.notEqual(hostGame.state.area, game.state.area)
   const players = game.state.actors.filter(({ id }) => playerIds.has(id))
   const npcs = game.state.actors.filter(({ id }) => !playerIds.has(id))
-  assert.equal(players.length, 3)
-  assert.equal(new Set(players.map(({ color }) => color)).size, 3)
-  assert.equal(npcs.filter(({ pose }) => pose === 'walk').length, 3)
-  const hostGame = await hostStart
-  assert.deepEqual(hostGame.state.actors, game.state.actors)
-  const original = game.state.actors.find(({ id }) => id === joined.playerId)
-  guest.socket.send(JSON.stringify({ type: 'game_input', x: 1, y: 0, sprint: false }))
-  const moved = await host.waitFor(({ state }) => state?.actors.some(({ id, x }) => id === joined.playerId && x > original.x))
-  assert.equal(moved.state.area, 0)
+  assert.deepEqual(players.map(({ id }) => id), [joined.playerId])
+  assert.deepEqual(hostGame.state.actors.filter(({ id }) => playerIds.has(id)).map(({ id }) => id), [created.playerId])
+  const area = areas[game.state.area]
+  assert.equal(npcs.filter(({ pose }) => pose === 'walk').length, area.walkingNpcs)
+  const [original] = players
+  const direction = original.x < (area.left + area.right) / 2 ? 1 : -1
+  guest.socket.send(JSON.stringify({ type: 'game_input', x: direction, y: 0, sprint: false }))
+  const moved = await guest.waitFor(({ state }) =>
+    state?.actors.some(({ id, x }) => id === joined.playerId && (x - original.x) * direction > 0))
+  assert.equal(moved.state.area, game.state.area)
   const stranger = await connect()
   assert.match((await stranger.command('join', { code: created.room.code })).error, /already started/)
   guest.socket.close()
@@ -459,7 +478,8 @@ test('host Start opens Park for the current roster and reconnect recovers the sa
   const restored = await replacement.waitFor(({ type }) => type === 'park')
   const actor = restored.state.actors.find(({ id }) => id === joined.playerId)
   assert.equal(actor.color, original.color)
-  assert.ok(actor.x > original.x)
+  assert.equal(restored.state.area, game.state.area)
+  assert.ok((actor.x - original.x) * direction > 0)
   await host.command('leave')
   await replacement.waitFor(({ type }) => type === 'room_closed')
   const soloRoom = await host.command('create')
