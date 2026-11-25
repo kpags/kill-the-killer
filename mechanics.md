@@ -81,7 +81,7 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 | Interactions | `F` | Toggle the Actions wheel |
 | Mouse | Mouse movement | Move the pointer |
 | Mouse | Left click | Kill or stun |
-| Mouse | Hold right click | Open the Inventory wheel and hover a section to see its effect. Release to close. |
+| Mouse | Hold right click | Open the Inventory wheel and hover a section to see its effect. Release to equip the last hovered item. |
 | Menu | `P` or **Pause** | Open the pause menu |
 | Menu | Hold `Tab` | Open the player list dialog while held. Release to close it. In Hitman, show each player's score. In Last Man Standing, grey out eliminated players. |
 
@@ -136,7 +136,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Food stores play the stickman's `1_consume.gif` once over 1.35 seconds. Drinks stores play `drink.gif` once over 0.72 seconds. Players in the same area see the animation. The player eating or drinking sees a two-second floating confirmation and can move or act again when the clip ends.
 - Speaker interactions loop all three dance clips in order until the player stops. Fountain's center bench fades when a model overlaps its wavy guide outline.
 - Press **F** or tap **Actions** to open the six-slot wheel. **Phone**, **Talk**, **Dance**, and **Scream** each loop a randomly chosen clip until the player moves, interacts, chooses another action, or enters combat.
-- Hold the right mouse button during gameplay to open **Inventory**. Hover over **Fist**, **Poison Blowgun**, **Smoke**, or **Rock** to read its effect from `data/inventory.json`. Release the button to dismiss the wheel.
+- The bottom inventory bar shows **Fist**, **Poisoned Blowgun**, **Smoke**, and **Rock**, in that order. A thick yellow outline marks the equipped item. Players start with **Fist** equipped.
+- Hold the right mouse button during gameplay to open **Inventory**. Hover over an item to read its effect from `data/inventory.json`. Release to equip the most recently hovered item, even if the cursor has left its section. If no item was hovered, the current item stays equipped.
 - The bottom of the seated model's hips rests on the orange guide box's bottom edge, with the legs extending naturally below. The map's `seat_slots` value sets the combined capacity for players and NPCs. Each occupant takes the nearest available slot. A sitting interaction with no `seat_slots` value defaults to one slot.
 - Nearby interaction prompts show **Sit**, **Hide**, **Dance**, or **Inspect** above the local player's head, with **E** on keyboard layouts or **Interact** on touch layouts. While hidden, the exit prompt and countdown appear above the player's hiding position. The inspection panel displays the interaction's name and details.
 - Gameplay messages such as a full bench or blocked action rise above the local player's model in white text with a thick black outline and fade out over two seconds.
@@ -180,6 +181,10 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-25 — Added equipping the last hovered inventory item when the right mouse button is released.
+
+- 2026-11-25 — Added four illustrated inventory slots with a yellow equipped-item outline.
 
 - 2026-11-25 — Added the drinks-store animation and the hold-right-click Inventory wheel with item effect tooltips.
 

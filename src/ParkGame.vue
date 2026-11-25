@@ -27,6 +27,8 @@ const directions = [
 ]
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const inventorySlots = Object.entries(inventory)
+const inventoryImages = import.meta.glob('../assets/images/inventory/**/*.png', { eager: true, import: 'default', query: '?url' })
+const equippedItem = ref('fist')
 const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
@@ -112,6 +114,7 @@ let draw
 let frameId
 let noticeTimeout
 let repeatInput
+let lastHoveredInventoryItem = null
 let disposed = false
 let fadedForeground = 0
 let activeCommand = false
@@ -196,14 +199,26 @@ function openInventory(event) {
 function closeInventory() {
   inventoryOpen.value = false
   hoveredInventoryItem.value = null
+  lastHoveredInventoryItem = null
+}
+
+function hoverInventoryItem(key) {
+  hoveredInventoryItem.value = key
+  lastHoveredInventoryItem = key
+}
+
+function equipInventorySelection() {
+  if (!inventoryOpen.value) return
+  if (lastHoveredInventoryItem !== null) equippedItem.value = lastHoveredInventoryItem
+  closeInventory()
 }
 
 function releaseInventory(event) {
-  if (event.button === 2) closeInventory()
+  if (event.button === 2) equipInventorySelection()
 }
 
 function checkInventoryHold(event) {
-  if (inventoryOpen.value && !(event.buttons & 2)) closeInventory()
+  if (inventoryOpen.value && !(event.buttons & 2)) equipInventorySelection()
 }
 
 function preventContextMenu(event) {
@@ -518,6 +533,7 @@ function readState() {
     pause: pauseScreen.value,
     actionsOpen: actionsOpen.value,
     inventoryOpen: inventoryOpen.value,
+    equippedItem: equippedItem.value,
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
@@ -623,39 +639,48 @@ defineExpose({ readState })
       </section>
     </div>
 
-    <div class="park-touch" aria-label="Touch controls">
-      <div class="park-direction">
-        <button
-          v-for="{ key, label, arrow } in directions"
-          :key="key"
-          type="button"
-          class="glass-button park-button"
-          :class="key"
-          :aria-label="label"
-          :disabled="!canMove || reconnecting"
-          @pointerdown.prevent="holdTouch($event, key)"
-          @pointerup="releaseTouch"
-          @pointercancel="releaseTouch"
-          @lostpointercapture="releaseTouch"
-        >{{ arrow }}</button>
+    <footer class="park-controls">
+      <ol class="park-inventory-bar" aria-label="Inventory slots">
+        <li v-for="[key, item] in inventorySlots" :key="key" class="park-inventory-slot"
+          :aria-current="key === equippedItem ? 'true' : undefined" :title="item.name">
+          <img :src="inventoryImages[`../${item.display_image}`]" :alt="item.name" draggable="false" />
+        </li>
+      </ol>
+
+      <div class="park-touch" aria-label="Touch controls">
+        <div class="park-direction">
+          <button
+            v-for="{ key, label, arrow } in directions"
+            :key="key"
+            type="button"
+            class="glass-button park-button"
+            :class="key"
+            :aria-label="label"
+            :disabled="!canMove || reconnecting"
+            @pointerdown.prevent="holdTouch($event, key)"
+            @pointerup="releaseTouch"
+            @pointercancel="releaseTouch"
+            @lostpointercapture="releaseTouch"
+          >{{ arrow }}</button>
+        </div>
+        <div class="park-touch-actions">
+          <button
+            type="button"
+            class="glass-button park-button"
+            :disabled="!canMove || reconnecting"
+            @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
+            @pointerup="releaseTouch"
+            @pointercancel="releaseTouch"
+            @lostpointercapture="releaseTouch"
+          >Sprint</button>
+          <button type="button" class="glass-button park-button" :disabled="!prompt || reconnecting" @click="interact">
+            Interact
+          </button>
+          <button type="button" class="glass-button park-button" aria-haspopup="dialog"
+            :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">Actions</button>
+        </div>
       </div>
-      <div class="park-touch-actions">
-        <button
-          type="button"
-          class="glass-button park-button"
-          :disabled="!canMove || reconnecting"
-          @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
-          @pointerup="releaseTouch"
-          @pointercancel="releaseTouch"
-          @lostpointercapture="releaseTouch"
-        >Sprint</button>
-        <button type="button" class="glass-button park-button" :disabled="!prompt || reconnecting" @click="interact">
-          Interact
-        </button>
-        <button type="button" class="glass-button park-button" aria-haspopup="dialog"
-          :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">Actions</button>
-      </div>
-    </div>
+    </footer>
 
     <dialog ref="actionsDialog" class="park-actions-dialog" aria-label="Actions"
       @cancel.prevent="closeActions" @click.self="closeActions">
@@ -678,7 +703,7 @@ defineExpose({ readState })
           <div v-for="([key, item], index) in inventorySlots" :key="key"
             class="park-action-slice park-inventory-slice" :style="{ '--turn': `${index * 90}deg` }"
             :aria-describedby="hoveredInventoryItem === key ? 'park-inventory-effect' : undefined"
-            @mouseenter="hoveredInventoryItem = key" @mouseleave="hoveredInventoryItem = null">
+            @mouseenter="hoverInventoryItem(key)" @mouseleave="hoveredInventoryItem = null">
             <span>{{ item.name }}</span>
           </div>
           <h2 id="park-inventory-title" class="park-action-center">Inventory</h2>
@@ -946,6 +971,44 @@ defineExpose({ readState })
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+.park-controls {
+  flex: none;
+  border-top: 1px solid #ffdfba40;
+  background: #201e28;
+}
+
+.park-inventory-bar {
+  display: flex;
+  justify-content: center;
+  gap: clamp(6px, 1.5vw, 10px);
+  margin: 0;
+  padding: 7px 10px max(7px, env(safe-area-inset-bottom));
+  list-style: none;
+}
+
+.park-inventory-slot {
+  display: grid;
+  place-items: center;
+  width: clamp(42px, 11vw, 58px);
+  aspect-ratio: 1;
+  padding: 5px;
+  border: 1px solid #ffdfba55;
+  border-radius: 12px;
+  background: #312b39;
+  overflow: hidden;
+}
+
+.park-inventory-slot[aria-current="true"] {
+  outline: 4px solid #ffda42;
+  outline-offset: -4px;
+}
+
+.park-inventory-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .park-game.park-penalized {
@@ -1487,6 +1550,8 @@ defineExpose({ readState })
 }
 
 @media (any-pointer: coarse) {
+  .park-inventory-bar { padding-bottom: 0; }
+
   .park-touch {
     display: flex;
     align-items: end;
@@ -1522,5 +1587,21 @@ defineExpose({ readState })
   .park-touch-label {
     display: inline;
   }
+}
+
+@media (any-pointer: coarse) and (min-width: 480px) and (max-height: 400px) {
+  .park-controls {
+    display: grid;
+    grid-template-columns: minmax(138px, 1fr) auto minmax(0, 1fr);
+    align-items: end;
+    gap: 8px;
+    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .park-touch { display: contents; }
+  .park-direction { grid-column: 1; grid-row: 1; }
+  .park-inventory-bar { grid-column: 2; grid-row: 1; gap: 5px; padding: 0; }
+  .park-inventory-slot { width: 38px; padding: 4px; }
+  .park-touch-actions { grid-column: 3; grid-row: 1; }
 }
 </style>

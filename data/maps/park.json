@@ -75,7 +75,6 @@
                     "name": "Drinks",
                     "effect": "Automatically consume a drink when interacted.",
                     "consumable": "Drink",
-                    "consumable": "Drink",
                     "type": {
                         "main": "store",
                         "sub": "drinks"

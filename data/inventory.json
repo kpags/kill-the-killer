@@ -6,16 +6,18 @@
         "type": {
             "main": "attack",
             "sub": "melee"
-        }
+        },
+        "display_image": "assets/images/inventory/attack/fist.png"
     },
     "poison_blowgun": {
-        "name": "Poison Blowgun",
+        "name": "Poisoned Blowgun",
         "effect": "Long range attack. Slows the target for 3 seconds before dying.",
         "max_distance": "150px",
         "type": {
             "main": "attack",
             "sub": "range"
-        }
+        },
+        "display_image": "assets/images/inventory/attack/poisoned_blowgun.png"
     },
     "smoke": {
         "name": "Smoke",
@@ -25,7 +27,8 @@
         "type": {
             "main": "utilities",
             "sub": "throwable"
-        }
+        },
+        "display_image": "assets/images/inventory/utilities/smoke.png"
     },
     "Rock": {
         "name": "Rock",
@@ -35,6 +38,7 @@
         "type": {
             "main": "utilities",
             "sub": "throwable"
-        }
+        },
+        "display_image": "assets/images/inventory/utilities/rock.png"
     }
 }
