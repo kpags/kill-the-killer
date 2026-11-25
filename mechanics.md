@@ -54,7 +54,7 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 ### NPC rules for both modes
 
 - Each NPC kill starts or refreshes a 10-second penalty. The penalized view is grayscale with slight blur, horizontal smearing, and distortion. The player's stickman retains its color and has a thick, pulsing red glow. Other players and spectators in the area see the red outline whenever that model is visible. At expiry, the glow stops and the grayscale, blur, smearing, and distortion fade over 0.5 seconds. With reduced motion, the glow and distortion stay steady.
-- While the penalty is active, **IN PENALTY** blinks at the top of the play area in white with a thick black outline. **Blurred/Distorted Vision** and **Location Exposed to All** stay visible beneath it. With reduced motion, the heading stays visible too.
+- While the penalty is active, **IN PENALTY** blinks at the top of the play area in white with a thick black outline. **Blurred/Distorted Vision** and **Location Exposed to All** stay visible in grey beneath it. With reduced motion, the heading stays visible too.
 - Unpenalized players and spectators see **PlayerName at AreaName** in the upper-left of the play area. Each NPC kill adds a notice that follows the player's current area and expires 10 seconds after that kill. The fourth active notice drops the oldest without clearing the associated player's personal penalty.
 - A penalty follows the player through area changes, reconnects, and Hitman respawns. While waiting to respawn, notices show the previous area. Leaving the room removes that player's notices.
 - Killed NPCs respawn and may use the same model or a different one.
@@ -116,12 +116,12 @@ Park follows the numbered folder order from left to right. Main has only a right
 
 | Order | Area | Asset folder | Orange interaction markers | Grey hiding markers |
 | --- | --- | --- | --- | --- |
-| 1 | Main | `1_main` | A: ice cream stall. B and C: benches. | — |
-| 2 | Food Stalls | `2_food_stalls` | A and B: benches. C: cotton candy stall. D: takoyaki stall. E: drinks stall. | — |
-| 3 | Fountain | `3_fountain` | A and D: benches. B and C: chairs. | — |
+| 1 | Main | `1_main` | A: Buy Ice Cream. B: Right Bench. C: Left Bench. | — |
+| 2 | Food Stalls | `2_food_stalls` | A: Left Bench. B: Right Bench. C: Cotton Candy. D: Takoyaki. E: Drinks. | — |
+| 3 | Fountain | `3_fountain` | A: Left Bench. B: Left Middle Bench. C: Right Middle Bench. D: Right Bench. | — |
 | 4 | Playground | `4_playground` | A: basketball shooting stall. B: firing range stall. C and D: speakers. | A and B: portable toilets. |
-| 5 | Fireworks | `5_fireworks` | A, B, and C: picnic tables. | — |
-| 6 | Carpark | `6_carpark` | — | A: blue car. B: red car. |
+| 5 | Fireworks | `5_fireworks` | A: Left Picnic Table. B: Middle Picnic Table. C: Right Picnic Table. | — |
+| 6 | Carpark | `6_carpark` | — | A: Blue Car. B: Red Car. |
 
 The table lists the orange and grey markers in the guides. Interaction names, types, and descriptions come from the map data. Marker letters can repeat between categories, as with orange A and grey A in Playground.
 
@@ -131,7 +131,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 
 - The host can start exploration solo or with the current room roster. At match start, every player and bot is assigned a different random area and spawns inside its playable boundary. A full six-player room uses all six Park areas. Each occupied seat receives a random, unique stickman color for the session. Bots stay at their spawn points.
 - Players can walk and sprint across the six areas using keyboard or touch controls. Stamina regenerates outside active sprinting. On phones, the view follows the player through areas wider than the screen.
-- Use **E** or the touch **Interact** button near seats, speakers, and hiding spots. Seats use the sit pose and speakers use the dance animation. **Buy Ice Cream** consumes an ice cream immediately and shows a floating confirmation above the player's model for two seconds. Other food stalls and activity booths show information from the map data. Interact again to stand, stop dancing, or exit hiding.
+- Use **E** or the touch **Interact** button near seats, speakers, and hiding spots. Seats use the sit pose and speakers use the dance animation. Interact again to stand, stop dancing, or exit hiding. The drinks stall and activity booths show information from the map data.
+- Food stores play the stickman's `1_consume.gif` once over 1.35 seconds. Players in the same area see the animation. The player eating sees a two-second floating confirmation and can move or act again when the clip ends.
 - Speaker interactions loop all three dance clips in order until the player stops. Fountain's center bench fades when a model overlaps its wavy guide outline.
 - Press **F** or tap **Actions** to open the six-slot wheel. **Phone**, **Talk**, **Dance**, and **Scream** each loop a randomly chosen clip until the player moves, interacts, chooses another action, or enters combat.
 - The bottom of the seated model's hips rests on the orange guide box's bottom edge, with the legs extending naturally below. The map's `seat_slots` value sets the combined capacity for players and NPCs. Each occupant takes the nearest available slot. A sitting interaction with no `seat_slots` value defaults to one slot.
@@ -151,6 +152,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Each area's `walking_npcs` value sets how many walkers can be active at once, including any walkers who stop to sit or dance. An omitted value or `0` means that only the blue-marker crowds spawn.
 - Walkers enter from the left or right side of the playable area at a random depth. They disappear at the opposite edge. After 5–10 seconds, the replacement enters from the side where the previous walker exited.
 - Each new walker has a 30% chance to head for an available seat or music interaction along its route. A walker that finds a free seat on arrival sits for 10–90 seconds. A walker that reaches a music interaction dances for 5–60 seconds. Both continue toward their exit edge afterward. Players and NPCs share the same seat limits.
+- Every 10 seconds, each area with an available food store has a 10% chance to send one randomly selected walking, talking, or phone-surfing NPC to the store. The NPC walks there, plays the eating animation once, and walks back to resume its prior activity. If a player starts eating there before the NPC arrives, the NPC heads back without eating.
 
 - One second after a victim finishes their death animation, the living NPCs in that area turn toward the kill location and each play a random scream clip once. They then turn toward the nearest exit and sprint away. Five seconds after the last NPC flees, NPCs begin walking back from random sides at staggered times. Walkers resume their routes and crowd members walk back to their group. A crowd member uses their phone until a conversation partner arrives. Another death during the same evacuation shares the ongoing reaction.
 
@@ -176,6 +178,10 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-25 — Cleaned the dark patches around the eating sprites' arms and added occasional NPC food-store visits.
+
+- 2026-11-25 — Added the eating animation at food stores, muted the penalty subtitles with grey text, and applied the map's updated interaction names.
 
 - 2026-11-23 — Added the hold-to-view player list dialog with live scores in Hitman and elimination status in Last Man Standing.
 

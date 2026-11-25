@@ -98,7 +98,7 @@ export function attackInPark(game, playerId, actorId, now) {
   const actor = game.players.get(playerId)
   if (!actor || actor.isBot || !isLiving(actor)) return 'You cannot attack right now.'
   if (game.winner) return 'The match has ended.'
-  if (actor.combat) return 'Wait for your current action to finish.'
+  if (actor.combat || actor.mode === 'consume') return 'Wait for your current action to finish.'
   const victim = typeof actorId === 'string' && (game.players.get(actorId) ?? game.npcs.get(actorId))
   if (!isLiving(victim) || victim === actor || victim.mode === 'hide' || victim.area !== actor.area) {
     return 'That model is unavailable.'

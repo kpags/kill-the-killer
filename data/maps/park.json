@@ -15,7 +15,7 @@
                     }
                 },
                 "B": {
-                    "name": "Bench B",
+                    "name": "Right Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -24,7 +24,7 @@
                     "seat_slots": 2
                 },
                 "C": {
-                    "name": "Bench C",
+                    "name": "Left Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                     "main": "sitting",
@@ -38,7 +38,7 @@
             "walking_npcs": 4,
             "interactions": {
                 "A": {
-                    "name": "Bench A",
+                    "name": "Left Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -47,7 +47,7 @@
                     "seat_slots": 2
                 },
                 "B": {
-                    "name": "Bench B",
+                    "name": "Right Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -85,7 +85,7 @@
             "walking_npcs": 1,
             "interactions": {
                 "A": {
-                    "name": "Bench A",
+                    "name": "Left Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -94,7 +94,7 @@
                     "seat_slots": 2
                 },
                 "B": {
-                    "name": "Bench B",
+                    "name": "Left Middle Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -103,7 +103,7 @@
                     "seat_slots": 1
                 },
                 "C": {
-                    "name": "Bench C",
+                    "name": "Right Middle Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -112,7 +112,7 @@
                     "seat_slots": 1
                 },
                 "D": {
-                    "name": "Bench D",
+                    "name": "Right Bench",
                     "effect": "Players/NPCs can sit and rest on the bench.",
                     "type": {
                         "main": "sitting",
@@ -181,7 +181,7 @@
             "walking_npcs": 1,
             "interactions": {
                 "A": {
-                    "name": "Picnic Table A",
+                    "name": "Left Picnic Table",
                     "effect": "Players/NPCs can sit and rest on the table.",
                     "type": {
                         "main": "sitting",
@@ -189,7 +189,7 @@
                     }
                 },
                 "B": {
-                    "name": "Picnic Table B",
+                    "name": "Middle Picnic Table",
                     "effect": "Players/NPCs can sit and rest on the table.",
                     "type": {
                         "main": "sitting",
@@ -198,7 +198,7 @@
                     "seat_slots": 2
                 },
                 "C": {
-                    "name": "Picnic Table C",
+                    "name": "Right Picnic Table",
                     "effect": "Players/NPCs can sit and rest on the table.",
                     "type": {
                         "main": "sitting",
@@ -213,7 +213,7 @@
             "model_scale": 0.8,
             "hiding_spots": {
                 "A": {
-                    "name": "Car A",
+                    "name": "Blue Car",
                     "effect": "Players can hide inside the car.",
                     "type": {
                         "main": "strategy",
@@ -221,7 +221,7 @@
                     }
                 },
                 "B": {
-                    "name": "Car B",
+                    "name": "Red Car",
                     "effect": "Players can hide insisde the car.",
                     "type": {
                         "main": "strategy",

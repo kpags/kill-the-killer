@@ -97,7 +97,8 @@ export const areas = [
 function spot(area, id, rect, hiding) {
   const [, y, , height] = rect
   const entry = park.areas[area.id][hiding ? 'hiding_spots' : 'interactions'][id]
-  return { id: `${hiding ? 'hide' : 'interact'}-${id}`, rect, y: y + height, hiding, ...entry }
+  const foodStore = entry.type.main === 'store' && entry.type.sub === 'food'
+  return { id: `${hiding ? 'hide' : 'interact'}-${id}`, rect, y: y + height, hiding, foodStore, ...entry }
 }
 
 export function groundRange(area, x) {

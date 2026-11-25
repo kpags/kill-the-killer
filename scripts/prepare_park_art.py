@@ -27,6 +27,7 @@ POSES = {
     **{f"talk-{clip}": ((f"talking/{clip}.gif",), 120) for clip in ("one", "two", "three")},
     **{f"dance-{clip}": ((f"dance/{clip}.gif",), 120) for clip in ("one", "two", "three")},
     **{f"scream-{clip}": ((f"scream/{clip}.gif",), 120) for clip in ("one", "two", "three")},
+    "consume": (("food/1_consume.gif",), 120),
     "kill": (("kill.gif",), 120),
     "punch": (("punch.gif",), 120),
     "death": (("death.gif",), 120),
@@ -44,15 +45,16 @@ def fill_cutouts(alpha):
     return ImageChops.lighter(alpha, holes)
 
 
-def actor_frame(frame, preserve_phone=False):
+def actor_frame(frame, preserve_details=False, consume=False):
     """Isolate the saturated body and keep a dark outline around it."""
     frame = frame.convert("RGBA")
     frame.thumbnail((300, 320), Image.Resampling.LANCZOS)
     width, height = frame.size
     pixels = list(frame.getdata())
+    minimum_light = 150 if consume else 92
     visited = bytearray(
         int(4 < i % width < width - 5 and 4 < i // width < height - 5
-            and alpha >= 120 and max(r, g, b) >= 92 and max(r, g, b) - min(r, g, b) >= 55)
+            and alpha >= 120 and max(r, g, b) >= minimum_light and max(r, g, b) - min(r, g, b) >= 55)
         for i, (r, g, b, alpha) in enumerate(pixels)
     )
     core = bytearray(width * height)
@@ -76,8 +78,21 @@ def actor_frame(frame, preserve_phone=False):
     core = Image.frombytes("L", (width, height), bytes(core))
     if not core.getbbox():
         raise ValueError("No character found")
-    if preserve_phone:
-        # Keep dim and neutral phone details near the character, without retaining the black background.
+    if consume:
+        # Dark glow in the GIF is strongest around the moving hand. Rebuild the ink
+        # from the bright body and food, so the glow and open arm gaps stay clear.
+        details = Image.frombytes("L", frame.size, bytes(
+            255 if max(r, g, b) >= minimum_light or (min(r, g, b) >= 90 and max(r, g, b) - min(r, g, b) < 55) else 0
+            for r, g, b, _ in pixels
+        ))
+        core = ImageChops.lighter(core, ImageChops.multiply(details, core.filter(ImageFilter.MaxFilter(25))))
+        ink = core.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5)).filter(ImageFilter.MaxFilter(7))
+        silhouette = Image.new("RGBA", frame.size, (15, 13, 19))
+        silhouette.paste(frame, mask=core)
+        silhouette.putalpha(ink.filter(ImageFilter.GaussianBlur(0.6)).point(lambda value: 0 if value < 18 else value))
+        return silhouette
+    if preserve_details:
+        # Preserve small props and marks near the character while removing the background.
         detail = frame.convert("RGB").split()
         brightest = ImageChops.lighter(ImageChops.lighter(detail[0], detail[1]), detail[2])
         detail_mask = brightest.point(lambda value: 255 if value >= 48 else 0)
@@ -85,7 +100,7 @@ def actor_frame(frame, preserve_phone=False):
     # Close gaps from the dark ink inside the body before adding the outer outline.
     core = core.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.MinFilter(9))
     outline = core.filter(ImageFilter.MaxFilter(9))
-    if preserve_phone:
+    if preserve_details:
         # Flood the outside so holes inside the model become solid and open gaps stay transparent.
         outline = fill_cutouts(outline)
     matte = outline.filter(ImageFilter.GaussianBlur(0.7))
@@ -108,16 +123,17 @@ def atlas(name, frames, durations):
 def actor_atlas(color, pose, sources, body_height):
     frames = []
     durations = []
+    preserve_details = pose.startswith("phone-")
     for source in sources:
         with Image.open(ASSETS / "stickmen" / color / source) as image:
             for frame in ImageSequence.Iterator(image):
                 duration = frame.info.get("duration", 100)
                 durations.append(max(1 if pose == "kill" else 40, duration))
-                frames.append(actor_frame(frame, preserve_phone=pose.startswith("phone-")))
+                frames.append(actor_frame(frame, preserve_details=preserve_details, consume=pose == "consume"))
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
     combat = pose in {"kill", "punch", "death", "pre-stun", "stun"}
-    fixed_crop = combat or pose == "phone-one"
+    fixed_crop = combat or pose in {"phone-one", "consume"}
     if fixed_crop:
         # A common crop preserves the sprite's origin across frames.
         # Phone One stands still. Its usual foot row excludes stray pixels under the shoes.
@@ -139,7 +155,7 @@ def actor_atlas(color, pose, sources, body_height):
         model = model.resize(
             (round(model.width * scale), round(model.height * scale)), Image.Resampling.LANCZOS
         )
-        if pose.startswith("phone-"):
+        if preserve_details:
             model.putalpha(fill_cutouts(model.getchannel("A")))
         if model.width > 156 or model.height > 132:
             raise ValueError(f"{color}/{pose} exceeds the gameplay frame")

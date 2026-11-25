@@ -2467,5 +2467,101 @@
       70,
       70
     ]
+  },
+  "blue-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
+  },
+  "green-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
+  },
+  "orange-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
+  },
+  "purple-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
+  },
+  "red-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
+  },
+  "yellow-consume": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
   }
 }

@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto'
 import { areas, colors, constrain, gameplayFeedbackMs, nearbySpot, randomGroundPoint, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
-import { combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
+import { animationDuration, combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 import { penaltySoundsFor } from './parkSounds.js'
@@ -65,7 +65,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
 }
 
 export function setParkInput(actor, input, now) {
-  if (!isLiving(actor) || actor.isBot || actor.combat) return
+  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume') return
   if (![-1, 0, 1].includes(input.x) || ![-1, 0, 1].includes(input.y) || typeof input.sprint !== 'boolean') return
   actor.input = { x: input.x, y: input.y, sprint: input.sprint, until: now + 300 }
   if (!input.sprint) actor.exhausted = false
@@ -113,7 +113,9 @@ function endInteraction(actor) {
 
 export function playParkAction(game, playerId, action, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || game.winner) return 'You cannot perform an action right now.'
+  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume' || game.winner) {
+    return 'You cannot perform an action right now.'
+  }
   if (!parkActions.includes(action)) return 'That action is unavailable.'
   endInteraction(actor)
   stopParkInput(actor)
@@ -126,7 +128,7 @@ export function playParkAction(game, playerId, action, now) {
 export function interactInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
   if (!actor || actor.isBot) return
-  if (!isLiving(actor) || actor.combat || game.winner) return 'You cannot interact right now.'
+  if (!isLiving(actor) || actor.combat || actor.mode === 'consume' || game.winner) return 'You cannot interact right now.'
   if (actor.mode === 'action') endInteraction(actor)
   else if (actor.mode !== 'free') {
     endInteraction(actor)
@@ -135,10 +137,13 @@ export function interactInPark(game, playerId, now) {
 
   const spot = nearbySpot(actor)
   if (!spot) return
-  if (spot.consumable) {
+  if (spot.foodStore) {
     stopParkInput(actor)
-    actor.pose = 'idle'
-    actor.consumption = { item: spot.consumable, startedAt: now }
+    actor.spotId = spot.id
+    actor.mode = 'consume'
+    actor.pose = 'consume'
+    actor.actionStartedAt = now
+    actor.consumption = { item: spot.consumable ?? spot.name, startedAt: now }
     return
   }
   const isSeat = spot.type.main === 'sitting'
@@ -197,6 +202,9 @@ export function stepPark(game, elapsedMs, now) {
   for (const actor of game.players.values()) {
     if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
+    if (actor.mode === 'consume' && now - actor.actionStartedAt >= animationDuration(actor.color, 'consume')) {
+      endInteraction(actor)
+    }
     const hidingMs = Math.min(elapsedMs, actor.profileHideMs)
     actor.profileHideMs -= hidingMs
     if (actor.combat) {

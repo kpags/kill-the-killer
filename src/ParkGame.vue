@@ -75,7 +75,7 @@ const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
 const alive = computed(() => props.state?.life === 'alive')
 const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.life))
-const canAct = computed(() => alive.value && !props.state?.matchEnded && props.state?.mode !== 'combat')
+const canAct = computed(() => alive.value && !props.state?.matchEnded && !['combat', 'consume'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
   if (props.state?.winner || props.state?.victimCue?.kind === 'killed') return null
@@ -95,7 +95,7 @@ const prompt = computed(() => {
       const nearby = spot.value
       if (!nearby) return props.state?.mode === 'action' ? 'Stop action' : null
       if (nearby.hiding) return 'Hide'
-      if (nearby.consumable) return nearby.name
+      if (nearby.foodStore) return nearby.consumable ? nearby.name : 'Eat'
       if (nearby.type.main === 'sitting') return 'Sit'
       if (nearby.type.sub === 'music') return 'Dance'
       return 'Inspect'
@@ -480,6 +480,7 @@ function readState() {
     actionsOpen: actionsOpen.value,
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
+    consumption: props.state?.consumption,
     hidingMs: props.state?.hidingMs,
     actors: props.state?.actors ?? [],
     fadedForeground,
@@ -953,6 +954,7 @@ defineExpose({ readState })
   margin: 0;
   padding: 0;
   list-style: none;
+  color: #b8b8b8;
   font-size: clamp(0.8125rem, 2.8vw, 1.0625rem);
   font-weight: 700;
   line-height: 1.2;

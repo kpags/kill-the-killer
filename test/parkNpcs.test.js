@@ -6,6 +6,74 @@ import { stepParkNpcs } from '../server/parkNpcs.js'
 import { createParkSession, interactInPark, parkView, stepPark } from '../server/parkSession.js'
 import { attackInPark } from '../server/parkCombat.js'
 
+test('one random eligible NPC visits food on a roll below ten percent and resumes its activity', () => {
+  for (const pose of ['walk', 'talk', 'phone-one']) {
+    const game = createParkSession([{ id: 'player' }], () => pose === 'phone-one' ? 0.2 : 0.5)
+    const player = game.players.get('player')
+    Object.assign(player, { area: 0 })
+    const visitor = pose === 'walk' ? game.walkers[0].actor : [...game.npcs.values()][0]
+    const partner = pose === 'talk' ? [...game.npcs.values()][1] : null
+    const origin = { x: visitor.x, y: visitor.y }
+    const visit = { spot: areas[0].spots[1], point: constrain(areas[0], 380, 278) }
+    if (pose === 'walk') game.walkers[0].visit = visit
+    const selected = [...game.npcs.values()].filter(({ area }) => area === 0).indexOf(visitor)
+    const count = [...game.npcs.values()].filter(({ area }) => area === 0).length
+
+    game.random = () => 0.1
+    stepParkNpcs(game, 0, 0)
+    stepParkNpcs(game, 0, 10_000)
+    assert.equal(visitor.foodVisit, undefined)
+    const draws = [0.099, (selected + 0.5) / count, 0]
+    game.random = () => draws.shift() ?? 0.5
+    stepParkNpcs(game, 0, 19_999)
+    assert.equal(visitor.foodVisit, undefined)
+    stepParkNpcs(game, 0, 20_000)
+    assert.deepEqual([...game.npcs.values()].filter(({ foodVisit }) => foodVisit), [visitor])
+    assert.equal(visitor.pose, 'walk')
+    assert.equal(visitor.spotId, 'interact-A')
+    if (partner) assert.match(partner.pose, /^phone-/)
+
+    stepParkNpcs(game, 7000, 27_000)
+    assert.equal(visitor.pose, 'consume')
+    assert.equal(parkView(game, 'player', 27_000).actors.find(({ id }) => id === visitor.id).actionStartedAt, 27_000)
+    assert.equal(parkView(game, 'player', 27_000).consumption, undefined)
+    const ends = 27_000 + animationDuration(visitor.color, 'consume')
+    stepParkNpcs(game, 50, ends - 1)
+    assert.equal(visitor.pose, 'consume')
+    stepParkNpcs(game, 50, ends)
+    assert.equal(visitor.pose, 'walk')
+    assert.equal(visitor.spotId, null)
+    stepParkNpcs(game, 7000, ends + 7000)
+    assert.equal(visitor.foodVisit, null)
+    assert.equal(visitor.pose, pose)
+    if (partner) assert.equal(partner.pose, 'talk')
+    if (pose === 'walk') assert.equal(game.walkers[0].visit, visit)
+    assert.deepEqual({ x: visitor.x, y: visitor.y }, origin)
+  }
+})
+
+test('NPCs skip occupied food stores and go back if a player starts eating before they arrive', () => {
+  const game = createParkSession([{ id: 'player' }], () => 0.5)
+  const player = game.players.get('player')
+  const visitor = [...game.npcs.values()][0]
+  Object.assign(player, { area: 0, x: 427, y: 278 })
+  stepParkNpcs(game, 0, 0)
+  interactInPark(game, player.id, 9999)
+  const draws = [0.5, 0, 0, 0]
+  game.random = () => draws.shift() ?? 0.5
+  stepParkNpcs(game, 0, 10_000)
+  assert.equal(visitor.foodVisit, undefined)
+  assert.equal(draws.length, 3)
+  stepPark(game, 0, 11_500)
+  stepParkNpcs(game, 0, 20_000)
+  assert.equal(visitor.mode, 'food-walk')
+  assert.equal(interactInPark(game, player.id, 25_999), undefined)
+  stepParkNpcs(game, 6000, 26_000)
+  assert.equal(visitor.mode, 'food-return')
+  assert.equal(visitor.spotId, null)
+  assert.equal(visitor.actionStartedAt, null)
+})
+
 test('a player death causes a synchronized scream, nearest-edge flight and staggered return in its area', () => {
   for (const [areaIndex, area] of areas.entries()) {
     const game = createParkSession([{ id: 'attacker' }, { id: 'victim' }], () => 0.5)
@@ -219,7 +287,7 @@ test('NPCs share player seats, recheck availability, and free them after 10–90
     const { game, slot } = spawnSingleWalker(2, 0.01, 0.3)
     const player = game.players.get('player')
     const { actor, visit } = slot
-    assert.equal(visit.spot.name, 'Bench B')
+    assert.equal(visit.spot.name, 'Left Middle Bench')
     Object.assign(player, visit.point, { area: 2 })
     if (playerFirst) interactInPark(game, 'player', 1)
     Object.assign(actor, visit.point)
@@ -234,7 +302,7 @@ test('NPCs share player seats, recheck availability, and free them after 10–90
       const resumeAt = 100 + duration
       assert.equal(actor.pose, 'sit')
       assert.equal(slot.resumeAt, resumeAt)
-      assert.equal(interactInPark(game, 'player', 101), 'Bench B is full.')
+      assert.equal(interactInPark(game, 'player', 101), 'Left Middle Bench is full.')
       stepParkNpcs(game, 50, resumeAt - 1)
       assert.equal(slot.actor, actor)
       assert.equal(actor.pose, 'sit')

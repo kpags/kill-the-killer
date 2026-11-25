@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, colors, constrain, hidingPose, standingHeight } from '../shared/park.js'
+import { animationDuration } from '../shared/combat.js'
 import { createParkSession, interactInPark, parkView, setParkInput, stepPark } from '../server/parkSession.js'
 
 function roster(count = 2) {
@@ -247,24 +248,49 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(parkView(game, '1', 10010).actors.length, 2)
 })
 
-test('the ice cream stall consumes immediately and only confirms to the nearby player', () => {
-  const game = createEmptyPark(roster())
-  const player = game.players.get('0')
-  Object.assign(player, { x: 426, y: 311 })
-  interactInPark(game, player.id, 1)
-  assert.equal(parkView(game, player.id, 1).consumption, undefined)
+test('food stores play one shared consumption animation and give private confirmation', () => {
+  for (const [area, x, y, item] of [
+    [0, 426, 278, 'Ice cream'],
+    [1, 380, 290, 'Cotton Candy'],
+    [1, 510, 290, 'Takoyaki'],
+    [1, 639, 290, null],
+  ]) {
+    const game = createEmptyPark(roster())
+    const [player, observer] = game.players.values()
+    Object.assign(observer, { area })
+    Object.assign(player, { area, x, y: y + 30 })
+    interactInPark(game, player.id, 1)
+    assert.equal(parkView(game, player.id, 1).consumption, undefined)
 
-  Object.assign(player, { y: 278, pose: 'phone-one', mode: 'action', actionStartedAt: 1 })
-  interactInPark(game, player.id, 2)
-  const view = parkView(game, player.id, 2)
-  assert.equal(view.mode, 'free')
-  assert.equal(view.actors.find(({ id }) => id === player.id).pose, 'idle')
-  assert.deepEqual(view.consumption, { item: 'Ice cream', startedAt: 2 })
-  assert.equal(parkView(game, '1', 2).consumption, undefined)
+    Object.assign(player, { y, pose: 'phone-one', mode: 'action', actionStartedAt: 1 })
+    interactInPark(game, player.id, 2)
+    const own = parkView(game, player.id, 2)
+    if (!item) {
+      assert.equal(own.mode, 'inspect')
+      assert.equal(own.consumption, undefined)
+      continue
+    }
+    assert.equal(own.mode, 'consume')
+    assert.deepEqual(own.consumption, { item, startedAt: 2 })
+    const other = parkView(game, observer.id, 2)
+    const visible = other.actors.find(({ id }) => id === player.id)
+    assert.equal(visible.pose, 'consume')
+    assert.equal(visible.actionStartedAt, 2)
+    assert.equal(other.consumption, undefined)
 
-  interactInPark(game, player.id, 3)
-  assert.equal(parkView(game, player.id, 2002).consumption.startedAt, 3)
-  assert.equal(parkView(game, player.id, 2003).consumption, undefined)
+    assert.match(interactInPark(game, player.id, 3), /cannot interact/)
+    setParkInput(player, { x: 1, y: 0, sprint: true }, 4)
+    const end = 2 + animationDuration(player.color, 'consume')
+    stepPark(game, 50, end - 1)
+    assert.equal(player.pose, 'consume')
+    stepPark(game, 50, end)
+    assert.equal(player.mode, 'free')
+    assert.equal(player.pose, 'idle')
+    assert.equal(player.x, x)
+    assert.equal(parkView(game, player.id, 2001).consumption.startedAt, 2)
+    assert.equal(parkView(game, player.id, 2002).consumption, undefined)
+  }
+  assert.deepEqual(colors.map((color) => animationDuration(color, 'consume')), Array(colors.length).fill(1350))
 })
 
 test('bench slots fill independently and free up when a player stands', () => {
@@ -277,7 +303,7 @@ test('bench slots fill independently and free up when a player stands', () => {
   interactInPark(game, second.id, 2)
   assert.deepEqual([first.x, first.y, first.seatSlot], [128.25, 251, 0])
   assert.deepEqual([second.x, second.y, second.seatSlot], [170.75, 251, 1])
-  assert.equal(interactInPark(game, third.id, 3), 'Bench C is full.')
+  assert.equal(interactInPark(game, third.id, 3), 'Left Bench is full.')
   assert.equal(third.mode, 'free')
 
   interactInPark(game, first.id, 4)
@@ -289,8 +315,8 @@ test('bench slots fill independently and free up when a player stands', () => {
 
 test('one-seat chairs and legacy picnic tables only seat one occupant', () => {
   for (const [area, x, y, bottom, name] of [
-    [2, 167, 250, 218, 'Bench B'],
-    [4, 90, 289, 247, 'Picnic Table A'],
+    [2, 167, 250, 218, 'Left Middle Bench'],
+    [4, 90, 289, 247, 'Left Picnic Table'],
   ]) {
     const game = createEmptyPark(roster())
     const [first, second] = game.players.values()

@@ -9,6 +9,7 @@ const directions = [-1, 1]
 const maxCrowdSize = 3
 const screamDelay = 1000
 const returnDelay = 5000
+const foodVisitInterval = 10_000
 // In left-to-right order, the outer talkers always face inward.
 const crowdFacings = {
   1: [[-1], [1]],
@@ -123,6 +124,63 @@ function walkTo(actor, area, goal, distance) {
   return fraction === 1
 }
 
+function foodStoreAvailable(game, area, spotId, visitor) {
+  for (const roster of [game.players, game.npcs]) {
+    for (const actor of roster.values()) {
+      if (actor !== visitor && actor.area === area && actor.spotId === spotId
+        && (actor.mode === 'consume' || actor.mode === 'food-walk')) return false
+    }
+  }
+  return true
+}
+
+function scheduleFoodVisits(game, now) {
+  game.nextFoodVisitAt ??= now + foodVisitInterval
+  if (now < game.nextFoodVisitAt) return
+  game.nextFoodVisitAt = now + foodVisitInterval
+  for (const [areaIndex, area] of areas.entries()) {
+    if (game.npcPanics.has(areaIndex)) continue
+    const stores = area.spots.filter((spot) => spot.foodStore && foodStoreAvailable(game, areaIndex, spot.id))
+    if (!stores.length) continue
+    const candidates = [...game.npcs.values()].filter((actor) => actor.area === areaIndex && isLiving(actor)
+      && !actor.arrival && !actor.foodVisit && (actor.pose === 'walk' || actor.pose === 'talk' || phonePoses.includes(actor.pose)))
+    if (!candidates.length || game.random() >= 0.1) continue
+
+    const actor = pick(candidates, game.random)
+    const spot = pick(stores, game.random)
+    const [left, , width] = spot.rect
+    actor.foodVisit = {
+      point: constrain(area, left + width / 2, spot.y + 6),
+      origin: { x: actor.x, y: actor.y },
+      previous: { facing: actor.facing, pose: actor.pose, mode: actor.mode },
+    }
+    Object.assign(actor, { mode: 'food-walk', pose: 'walk', spotId: spot.id, actionStartedAt: null })
+    if (actor.crowd) updateConversation(game, actor.crowd.group)
+  }
+}
+
+function stepFoodVisit(game, actor, distance, now) {
+  const area = areas[actor.area]
+  const { point, origin, previous } = actor.foodVisit
+  if (actor.mode === 'food-return') {
+    if (walkTo(actor, area, origin, distance)) {
+      Object.assign(actor, previous, { foodVisit: null })
+      if (actor.crowd) updateConversation(game, actor.crowd.group)
+    }
+    return
+  }
+  if (actor.mode === 'food-walk') {
+    if (!walkTo(actor, area, point, distance)) return
+    if (foodStoreAvailable(game, actor.area, actor.spotId, actor)) {
+      Object.assign(actor, { mode: 'consume', pose: 'consume', actionStartedAt: now })
+      return
+    }
+  } else if (now - actor.actionStartedAt < animationDuration(actor.color, 'consume')) {
+    return
+  }
+  Object.assign(actor, { mode: 'food-return', pose: 'walk', spotId: null, actionStartedAt: null })
+}
+
 function startActivity(game, slot, now) {
   const { actor, visit: { spot } } = slot
   slot.visit = null
@@ -143,7 +201,7 @@ function startActivity(game, slot, now) {
 
 function updateConversation(game, group) {
   const members = [...game.npcs.values()]
-    .filter((actor) => actor.crowd?.group === group && isLiving(actor) && !actor.arrival && actor.mode !== 'panic')
+    .filter((actor) => actor.crowd?.group === group && isLiving(actor) && !actor.arrival && !actor.foodVisit && actor.mode !== 'panic')
     .sort((first, second) => first.x - second.x)
   if (members.length === 1) {
     const actor = members[0]
@@ -184,7 +242,7 @@ function startPanic(game, areaIndex, { startsAt, deathX }) {
     Object.assign(actor, constrain(area, actor.x, actor.y))
     const pose = pick(screamPoses, game.random)
     Object.assign(actor, {
-      mode: 'panic', pose, actionStartedAt: startsAt, arrival: null,
+      mode: 'panic', pose, actionStartedAt: startsAt, arrival: null, foodVisit: null,
       spotId: null, seatSlot: null,
       facing: Math.sign(deathX - actor.x) || actor.facing,
       screamEndsAt: startsAt + animationDuration(actor.color, pose),
@@ -274,6 +332,7 @@ export function stepParkNpcs(game, elapsedMs, now) {
     spawnCrowdReplacement(game, pending)
     return false
   })
+  scheduleFoodVisits(game, now)
   const distance = walkSpeed * elapsedMs / 1000
   for (const actor of game.npcs.values()) {
     if (!actor.arrival || !isLiving(actor)) continue
@@ -288,7 +347,7 @@ export function stepParkNpcs(game, elapsedMs, now) {
       if (now >= slot.respawnAt) spawnWalker(game, slot, -slot.direction)
       continue
     }
-    if (!isLiving(actor)) continue
+    if (!isLiving(actor) || actor.foodVisit) continue
     const area = areas[slot.area]
     if (slot.resumeAt !== null) {
       if (now < slot.resumeAt) continue
@@ -311,5 +370,8 @@ export function stepParkNpcs(game, elapsedMs, now) {
       slot.actor = null
       slot.respawnAt = now + randomTime(game.random, 5000, 10_000)
     }
+  }
+  for (const actor of game.npcs.values()) {
+    if (actor.foodVisit && isLiving(actor)) stepFoodVisit(game, actor, distance, now)
   }
 }
