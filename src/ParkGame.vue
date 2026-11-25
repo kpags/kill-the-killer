@@ -7,6 +7,7 @@ import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
 import AudioSettings from './AudioSettings.vue'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
+import inventory from '../data/inventory.json'
 
 const audioSettings = defineModel('audioSettings', { type: Object, required: true })
 const props = defineProps({
@@ -25,6 +26,7 @@ const directions = [
   { key: 'KeyD', label: 'Move right', arrow: '→' },
 ]
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
+const inventorySlots = Object.entries(inventory)
 const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
@@ -51,6 +53,8 @@ const pauseScreen = ref(null)
 const pauseDialog = ref(null)
 const playerListOpen = ref(false)
 const actionsOpen = ref(false)
+const inventoryOpen = ref(false)
+const hoveredInventoryItem = ref(null)
 const actionsDialog = ref(null)
 const resumeButton = ref(null)
 const settingsButton = ref(null)
@@ -95,7 +99,8 @@ const prompt = computed(() => {
       const nearby = spot.value
       if (!nearby) return props.state?.mode === 'action' ? 'Stop action' : null
       if (nearby.hiding) return 'Hide'
-      if (nearby.foodStore) return nearby.consumable ? nearby.name : 'Eat'
+      if (nearby.consumptionPose === 'drink') return 'Drink'
+      if (nearby.consumptionPose === 'consume') return nearby.consumable ? nearby.name : 'Eat'
       if (nearby.type.main === 'sitting') return 'Sit'
       if (nearby.type.sub === 'music') return 'Dance'
       return 'Inspect'
@@ -115,7 +120,7 @@ let hoveredActorId = null
 
 function transmit() {
   const active = new Set([...pressed, ...pointers.values()])
-  const blocked = pauseScreen.value || actionsOpen.value || !artReady.value || props.reconnecting || !canMove.value
+  const blocked = pauseScreen.value || actionsOpen.value || inventoryOpen.value || !artReady.value || props.reconnecting || !canMove.value
   props.input({
     x: blocked ? 0 : Number(active.has('KeyD')) - Number(active.has('KeyA')),
     y: blocked ? 0 : Number(active.has('KeyS')) - Number(active.has('KeyW')),
@@ -131,6 +136,7 @@ function release() {
 
 function clearHeldControls() {
   playerListOpen.value = false
+  closeInventory()
   release()
 }
 
@@ -148,7 +154,7 @@ function showGameplayNotice(text) {
 }
 
 async function interact() {
-  if (pauseScreen.value || actionsOpen.value || activeCommand || !prompt.value || props.reconnecting) return
+  if (pauseScreen.value || actionsOpen.value || inventoryOpen.value || activeCommand || !prompt.value || props.reconnecting) return
   activeCommand = true
   release()
   try {
@@ -179,6 +185,31 @@ function toggleActions() {
   actionsDialog.value.showModal()
 }
 
+function openInventory(event) {
+  if (event.button !== 2 || pauseScreen.value || actionsOpen.value || props.reconnecting || !canAct.value || !artReady.value) return
+  event.preventDefault()
+  playerListOpen.value = false
+  inventoryOpen.value = true
+  release()
+}
+
+function closeInventory() {
+  inventoryOpen.value = false
+  hoveredInventoryItem.value = null
+}
+
+function releaseInventory(event) {
+  if (event.button === 2) closeInventory()
+}
+
+function checkInventoryHold(event) {
+  if (inventoryOpen.value && !(event.buttons & 2)) closeInventory()
+}
+
+function preventContextMenu(event) {
+  if (!pauseScreen.value && !actionsOpen.value) event.preventDefault()
+}
+
 async function selectAction(label) {
   if (!actionsOpen.value || !canAct.value || activeCommand || props.reconnecting) return
   activeCommand = true
@@ -207,7 +238,7 @@ function clearHover() {
 }
 
 async function attack(event) {
-  if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value
+  if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value || inventoryOpen.value
     || activeCommand || props.reconnecting || !artReady.value) return
   pointer = pointAt(event)
   const { attackId } = draw(props.state, performance.now(), props.playerId, false, pointer, true)
@@ -246,7 +277,7 @@ function keyDown(event) {
     openPause()
     return
   }
-  if (pauseScreen.value) return
+  if (pauseScreen.value || inventoryOpen.value) return
   if (event.code === 'Tab' && !actionsOpen.value && props.state && !props.reconnecting
     && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
@@ -307,7 +338,11 @@ watch(() => props.reconnecting, (value) => {
     clearHeldControls()
   }
 })
-watch(canAct, (value) => { if (!value) closeActions() })
+watch(canAct, (value) => {
+  if (value) return
+  closeActions()
+  closeInventory()
+})
 watch(canMove, (value) => { if (!value) releaseMovement() })
 watch(() => props.state?.matchEnded, (value) => { if (value) release() })
 watch(() => Boolean(props.state?.winner), (showWinner) => {
@@ -372,7 +407,7 @@ function render(now) {
     const label = overheadPrompt.value
     const { faded, head, hoveredId, serverNow, feedbackTop, penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
-        pauseScreen.value || actionsOpen.value || props.reconnecting ? null : pointer, false, gameplayNotice.value)
+        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting ? null : pointer, false, gameplayNotice.value)
     penaltyActive.value = penalized
     penaltyStrength.value = strength
     fadedForeground = faded
@@ -415,6 +450,8 @@ onMounted(async () => {
   refocus()
   window.addEventListener('keydown', keyDown)
   window.addEventListener('keyup', keyUp)
+  window.addEventListener('mouseup', releaseInventory)
+  window.addEventListener('mousemove', checkInventoryHold)
   window.addEventListener('blur', clearHeldControls)
   document.addEventListener('visibilitychange', clearHeldControls)
   repeatInput = window.setInterval(() => {
@@ -445,6 +482,8 @@ onUnmounted(() => {
   window.clearInterval(repeatInput)
   window.removeEventListener('keydown', keyDown)
   window.removeEventListener('keyup', keyUp)
+  window.removeEventListener('mouseup', releaseInventory)
+  window.removeEventListener('mousemove', checkInventoryHold)
   window.removeEventListener('blur', clearHeldControls)
   document.removeEventListener('visibilitychange', clearHeldControls)
 })
@@ -478,6 +517,7 @@ function readState() {
     modelScale: area.value?.modelScale,
     pause: pauseScreen.value,
     actionsOpen: actionsOpen.value,
+    inventoryOpen: inventoryOpen.value,
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
@@ -493,7 +533,7 @@ defineExpose({ readState })
 
 <template>
   <main class="park-game" :class="{ 'park-penalized': penaltyStrength > 0, 'park-pov-stunned': stunnedView }"
-    :style="{ '--penalty-grayscale': penaltyStrength }">
+    :style="{ '--penalty-grayscale': penaltyStrength }" @mousedown="openInventory" @contextmenu="preventContextMenu">
     <header class="park-hud">
       <div class="park-profile">
         <div class="park-profile-track" role="meter" aria-labelledby="park-profile-label"
@@ -631,6 +671,23 @@ defineExpose({ readState })
         <button type="button" class="park-action-center" aria-label="Close Actions" @click="closeActions">Actions</button>
       </div>
     </dialog>
+
+    <div v-if="inventoryOpen" class="park-inventory-overlay">
+      <dialog open class="park-inventory-dialog" aria-labelledby="park-inventory-title">
+        <div class="park-actions-wheel">
+          <div v-for="([key, item], index) in inventorySlots" :key="key"
+            class="park-action-slice park-inventory-slice" :style="{ '--turn': `${index * 90}deg` }"
+            :aria-describedby="hoveredInventoryItem === key ? 'park-inventory-effect' : undefined"
+            @mouseenter="hoveredInventoryItem = key" @mouseleave="hoveredInventoryItem = null">
+            <span>{{ item.name }}</span>
+          </div>
+          <h2 id="park-inventory-title" class="park-action-center">Inventory</h2>
+        </div>
+        <p v-if="hoveredInventoryItem" id="park-inventory-effect" class="park-inventory-tooltip" role="tooltip">
+          {{ inventory[hoveredInventoryItem].effect }}
+        </p>
+      </dialog>
+    </div>
 
     <dialog v-if="playerListOpen" open class="park-player-list" aria-labelledby="park-player-list-title">
       <h2 id="park-player-list-title">Players</h2>
@@ -1205,7 +1262,8 @@ defineExpose({ readState })
   font-size: 0.9rem;
 }
 
-.park-actions-dialog {
+.park-actions-dialog,
+.park-inventory-dialog {
   width: min(19rem, calc(100vw - 24px), calc(100dvh - 24px));
   max-width: none;
   max-height: none;
@@ -1281,6 +1339,63 @@ defineExpose({ readState })
 .park-action-center:focus-visible {
   outline: 2px solid #ffc15c;
   outline-offset: 2px;
+}
+
+.park-inventory-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: #101728b8;
+  user-select: none;
+}
+
+.park-inventory-dialog {
+  position: relative;
+  width: min(20rem, calc(100vw - 24px), calc(100dvh - 9rem));
+  margin: 0;
+}
+
+.park-inventory-slice {
+  clip-path: polygon(50% 50%, 3.4% 0, 96.6% 0);
+  background: conic-gradient(from -43deg, var(--slice) 86deg, transparent 86deg);
+  mask-image: radial-gradient(circle closest-side, transparent 39%, #000 40%, #000 99%, transparent 100%);
+  cursor: default;
+  text-align: center;
+}
+
+.park-inventory-slice span {
+  top: 14%;
+  width: min(48%, 6rem);
+  font-size: clamp(0.75rem, 3.7vmin, 1rem);
+  line-height: 1.1;
+}
+
+.park-inventory-dialog h2 {
+  inset: 31%;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-size: clamp(0.875rem, 4vmin, 1.125rem);
+  cursor: default;
+}
+
+.park-inventory-tooltip {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 24px));
+  margin: 0;
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid #ffdfba65;
+  border-radius: 10px;
+  background: #251e25;
+  font-size: 0.875rem;
+  text-align: center;
+  pointer-events: none;
 }
 
 .park-player-list {

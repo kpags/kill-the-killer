@@ -28,6 +28,7 @@ POSES = {
     **{f"dance-{clip}": ((f"dance/{clip}.gif",), 120) for clip in ("one", "two", "three")},
     **{f"scream-{clip}": ((f"scream/{clip}.gif",), 120) for clip in ("one", "two", "three")},
     "consume": (("food/1_consume.gif",), 120),
+    "drink": (("drink.gif",), 120),
     "kill": (("kill.gif",), 120),
     "punch": (("punch.gif",), 120),
     "death": (("death.gif",), 120),
@@ -45,13 +46,13 @@ def fill_cutouts(alpha):
     return ImageChops.lighter(alpha, holes)
 
 
-def actor_frame(frame, preserve_details=False, consume=False):
+def actor_frame(frame, preserve_details=False, consumable=False):
     """Isolate the saturated body and keep a dark outline around it."""
     frame = frame.convert("RGBA")
     frame.thumbnail((300, 320), Image.Resampling.LANCZOS)
     width, height = frame.size
     pixels = list(frame.getdata())
-    minimum_light = 150 if consume else 92
+    minimum_light = 150 if consumable else 92
     visited = bytearray(
         int(4 < i % width < width - 5 and 4 < i // width < height - 5
             and alpha >= 120 and max(r, g, b) >= minimum_light and max(r, g, b) - min(r, g, b) >= 55)
@@ -78,9 +79,9 @@ def actor_frame(frame, preserve_details=False, consume=False):
     core = Image.frombytes("L", (width, height), bytes(core))
     if not core.getbbox():
         raise ValueError("No character found")
-    if consume:
-        # Dark glow in the GIF is strongest around the moving hand. Rebuild the ink
-        # from the bright body and food, so the glow and open arm gaps stay clear.
+    if consumable:
+        # Rebuild the ink from the bright body and prop to remove the glow around
+        # the moving hand and keep open arm gaps transparent.
         details = Image.frombytes("L", frame.size, bytes(
             255 if max(r, g, b) >= minimum_light or (min(r, g, b) >= 90 and max(r, g, b) - min(r, g, b) < 55) else 0
             for r, g, b, _ in pixels
@@ -124,16 +125,17 @@ def actor_atlas(color, pose, sources, body_height):
     frames = []
     durations = []
     preserve_details = pose.startswith("phone-")
+    consumable = pose in {"consume", "drink"}
     for source in sources:
         with Image.open(ASSETS / "stickmen" / color / source) as image:
             for frame in ImageSequence.Iterator(image):
                 duration = frame.info.get("duration", 100)
                 durations.append(max(1 if pose == "kill" else 40, duration))
-                frames.append(actor_frame(frame, preserve_details=preserve_details, consume=pose == "consume"))
+                frames.append(actor_frame(frame, preserve_details=preserve_details, consumable=consumable))
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
     combat = pose in {"kill", "punch", "death", "pre-stun", "stun"}
-    fixed_crop = combat or pose in {"phone-one", "consume"}
+    fixed_crop = combat or consumable or pose == "phone-one"
     if fixed_crop:
         # A common crop preserves the sprite's origin across frames.
         # Phone One stands still. Its usual foot row excludes stray pixels under the shoes.

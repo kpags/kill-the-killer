@@ -137,11 +137,11 @@ export function interactInPark(game, playerId, now) {
 
   const spot = nearbySpot(actor)
   if (!spot) return
-  if (spot.foodStore) {
+  if (spot.consumptionPose) {
     stopParkInput(actor)
     actor.spotId = spot.id
     actor.mode = 'consume'
-    actor.pose = 'consume'
+    actor.pose = spot.consumptionPose
     actor.actionStartedAt = now
     actor.consumption = { item: spot.consumable ?? spot.name, startedAt: now }
     return
@@ -202,7 +202,7 @@ export function stepPark(game, elapsedMs, now) {
   for (const actor of game.players.values()) {
     if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
-    if (actor.mode === 'consume' && now - actor.actionStartedAt >= animationDuration(actor.color, 'consume')) {
+    if (actor.mode === 'consume' && now - actor.actionStartedAt >= animationDuration(actor.color, actor.pose)) {
       endInteraction(actor)
     }
     const hidingMs = Math.min(elapsedMs, actor.profileHideMs)

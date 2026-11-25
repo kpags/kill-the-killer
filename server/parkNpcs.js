@@ -140,7 +140,7 @@ function scheduleFoodVisits(game, now) {
   game.nextFoodVisitAt = now + foodVisitInterval
   for (const [areaIndex, area] of areas.entries()) {
     if (game.npcPanics.has(areaIndex)) continue
-    const stores = area.spots.filter((spot) => spot.foodStore && foodStoreAvailable(game, areaIndex, spot.id))
+    const stores = area.spots.filter((spot) => spot.consumptionPose === 'consume' && foodStoreAvailable(game, areaIndex, spot.id))
     if (!stores.length) continue
     const candidates = [...game.npcs.values()].filter((actor) => actor.area === areaIndex && isLiving(actor)
       && !actor.arrival && !actor.foodVisit && (actor.pose === 'walk' || actor.pose === 'talk' || phonePoses.includes(actor.pose)))

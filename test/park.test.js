@@ -248,12 +248,12 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(parkView(game, '1', 10010).actors.length, 2)
 })
 
-test('food stores play one shared consumption animation and give private confirmation', () => {
-  for (const [area, x, y, item] of [
-    [0, 426, 278, 'Ice cream'],
-    [1, 380, 290, 'Cotton Candy'],
-    [1, 510, 290, 'Takoyaki'],
-    [1, 639, 290, null],
+test('food and drinks stores play one shared consumption animation and give private confirmation', () => {
+  for (const [area, x, y, item, pose] of [
+    [0, 426, 278, 'Ice cream', 'consume'],
+    [1, 380, 290, 'Cotton Candy', 'consume'],
+    [1, 510, 290, 'Takoyaki', 'consume'],
+    [1, 639, 290, 'Drink', 'drink'],
   ]) {
     const game = createEmptyPark(roster())
     const [player, observer] = game.players.values()
@@ -265,24 +265,19 @@ test('food stores play one shared consumption animation and give private confirm
     Object.assign(player, { y, pose: 'phone-one', mode: 'action', actionStartedAt: 1 })
     interactInPark(game, player.id, 2)
     const own = parkView(game, player.id, 2)
-    if (!item) {
-      assert.equal(own.mode, 'inspect')
-      assert.equal(own.consumption, undefined)
-      continue
-    }
     assert.equal(own.mode, 'consume')
     assert.deepEqual(own.consumption, { item, startedAt: 2 })
     const other = parkView(game, observer.id, 2)
     const visible = other.actors.find(({ id }) => id === player.id)
-    assert.equal(visible.pose, 'consume')
+    assert.equal(visible.pose, pose)
     assert.equal(visible.actionStartedAt, 2)
     assert.equal(other.consumption, undefined)
 
     assert.match(interactInPark(game, player.id, 3), /cannot interact/)
     setParkInput(player, { x: 1, y: 0, sprint: true }, 4)
-    const end = 2 + animationDuration(player.color, 'consume')
+    const end = 2 + animationDuration(player.color, pose)
     stepPark(game, 50, end - 1)
-    assert.equal(player.pose, 'consume')
+    assert.equal(player.pose, pose)
     stepPark(game, 50, end)
     assert.equal(player.mode, 'free')
     assert.equal(player.pose, 'idle')
@@ -291,6 +286,7 @@ test('food stores play one shared consumption animation and give private confirm
     assert.equal(parkView(game, player.id, 2002).consumption, undefined)
   }
   assert.deepEqual(colors.map((color) => animationDuration(color, 'consume')), Array(colors.length).fill(1350))
+  assert.deepEqual(colors.map((color) => animationDuration(color, 'drink')), Array(colors.length).fill(720))
 })
 
 test('bench slots fill independently and free up when a player stands', () => {

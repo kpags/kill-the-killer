@@ -9,6 +9,7 @@ export const sprintSpeed = 121
 export const gameplayFeedbackMs = 2000
 const edgePadding = 45
 const spotRange = 21
+const storePoses = { food: 'consume', drink: 'drink', drinks: 'drink' }
 
 // All geometry uses the corresponding guide image's original pixel coordinates.
 export const areas = [
@@ -97,8 +98,8 @@ export const areas = [
 function spot(area, id, rect, hiding) {
   const [, y, , height] = rect
   const entry = park.areas[area.id][hiding ? 'hiding_spots' : 'interactions'][id]
-  const foodStore = entry.type.main === 'store' && entry.type.sub === 'food'
-  return { id: `${hiding ? 'hide' : 'interact'}-${id}`, rect, y: y + height, hiding, foodStore, ...entry }
+  const consumptionPose = entry.type.main === 'store' ? storePoses[entry.type.sub] : undefined
+  return { id: `${hiding ? 'hide' : 'interact'}-${id}`, rect, y: y + height, hiding, consumptionPose, ...entry }
 }
 
 export function groundRange(area, x) {

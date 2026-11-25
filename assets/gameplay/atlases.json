@@ -2563,5 +2563,101 @@
       150,
       150
     ]
+  },
+  "blue-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
+  },
+  "green-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
+  },
+  "orange-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
+  },
+  "purple-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
+  },
+  "red-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
+  },
+  "yellow-drink": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80
+    ]
   }
 }
