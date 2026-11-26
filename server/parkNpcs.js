@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { areas, colors, constrain, groundRange, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { claimSeat } from './parkSeats.js'
-import { animationDuration, isLiving, screamPoses } from '../shared/combat.js'
+import { animationDuration, isLiving, poisonSpeedFactor, screamPoses } from '../shared/combat.js'
 import { queueParkSound } from './parkSounds.js'
 
 const phonePoses = ['phone-one', 'phone-two', 'phone-three']
@@ -103,6 +103,7 @@ function walkTo(actor, area, goal, distance) {
   const dy = goal.y - actor.y
   const length = Math.hypot(dx, dy)
   if (!length) return true
+  if (actor.poison) distance *= poisonSpeedFactor
   const fraction = Math.min(1, distance / length)
   const x = actor.x + dx * fraction
   const y = actor.y + dy * fraction

@@ -2,10 +2,12 @@ import { randomInt } from 'node:crypto'
 import { areas, colors, constrain, gameplayFeedbackMs, nearbySpot, randomGroundPoint, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
-import { animationDuration, combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
+import { animationDuration, combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, poisonSpeedFactor,
+  respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 import { penaltySoundsFor } from './parkSounds.js'
+import { smokeObscuredUntil } from './parkSmoke.js'
 
 const staminaLimit = 100
 const profileRange = 36
@@ -31,6 +33,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
       pose: 'idle',
       mode: 'free',
       life: 'alive',
+      equippedItem: 'fist',
       combat: null,
       generation: 0,
       spotId: null,
@@ -56,6 +59,8 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
     soundEvents: new Map(),
+    blowgunShots: [],
+    smokeClouds: [],
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
@@ -198,6 +203,7 @@ function move(actor, dx, dy) {
 }
 
 export function stepPark(game, elapsedMs, now) {
+  if (game.smokeClouds.length) game.smokeClouds = game.smokeClouds.filter(({ endsAt }) => endsAt > now)
   const respawned = advanceParkCombat(game, now)
   for (const actor of game.players.values()) {
     if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
@@ -219,7 +225,8 @@ export function stepPark(game, elapsedMs, now) {
     let spentMs = 0
     if (moving) {
       spentMs = sprinting ? Math.min(elapsedMs, actor.stamina * 50) : 0
-      const distance = (sprintSpeed * spentMs + walkSpeed * (elapsedMs - spentMs)) / 1000
+      const speedFactor = actor.poison ? poisonSpeedFactor : 1
+      const distance = speedFactor * (sprintSpeed * spentMs + walkSpeed * (elapsedMs - spentMs)) / 1000
       const magnitude = Math.hypot(input.x, input.y)
       if (input.x) actor.facing = input.x
       if (move(actor, distance * input.x / magnitude, distance * input.y / magnitude)) {
@@ -263,6 +270,8 @@ export function parkView(game, playerId, now) {
   const hitman = game.modeId === 'Hitman'
   const spectating = actor.life === 'eliminated' && game.modeId === 'last_man_standing'
   const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
+  const smokeUntil = smokeObscuredUntil(actor, game.smokeClouds, now)
+  const smokeObscured = smokeUntil > now
   const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
   const { consumption } = actor
   const penaltyUntil = actor.penaltyUntil > now ? actor.penaltyUntil : undefined
@@ -273,6 +282,7 @@ export function parkView(game, playerId, now) {
   })
   const actors = [...game.players.values(), ...game.npcs.values()]
     .filter((other) => other.area === area
+      && (!smokeObscured || other === actor)
       && (isLiving(other) || (other.life === 'dying' && now < other.vanishesAt))
       && (other === actor || other.mode !== 'hide')
       && (!restricted || game.npcs.has(other.id) || other === actor
@@ -280,6 +290,14 @@ export function parkView(game, playerId, now) {
   return {
     area,
     serverTime: now,
+    equippedItem: actor.equippedItem,
+    smokeObscured,
+    smokeUntil,
+    smokeClouds: game.smokeClouds.filter((cloud) => cloud.area === area && cloud.endsAt > now)
+      .map(({ x, y, startedAt, endsAt }) => ({ x, y, startedAt, endsAt })),
+    blowgunReadyAt: actor.blowgunReadyAt,
+    blowgunTraces: game.blowgunShots.filter((shot) => shot.area === area)
+      .map(({ from, to, startedAt, hitAt }) => ({ from, to, startedAt, hitAt })),
     penaltyUntil,
     penaltySounds: penaltySoundsFor(game, playerId, now),
     penaltyFadeAt: !penaltyUntil && actor.penaltyUntil + penaltyFadeMs > now ? actor.penaltyUntil : undefined,
@@ -309,13 +327,14 @@ export function parkView(game, playerId, now) {
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),
     actors: actors.map(({ id, color, area: actorArea, x, y, facing, pose, mode, animationOffset, actionStartedAt,
-      life, combat, vanishesAt, generation, penaltyUntil: modelPenaltyUntil }) => ({
+      life, combat, vanishesAt, generation, poison, penaltyUntil: modelPenaltyUntil }) => ({
       id, color, area: actorArea, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
       facing, pose, hidden: mode === 'hide', animationOffset, life: life ?? 'alive',
       combat: combat ? { startedAt: combat.startedAt, endsAt: combat.endsAt } : null,
       actionStartedAt: actionStartedAt ?? undefined,
       oneShot: mode === 'panic' && actionStartedAt != null ? true : undefined,
       ...(modelPenaltyUntil > now ? { penaltyGlowUntil: modelPenaltyUntil } : {}),
+      ...(poison ? { poisonedAt: poison.hitAt, poisonedUntil: poison.endsAt } : {}),
       vanishesAt, generation: generation ?? 0,
     })),
   }

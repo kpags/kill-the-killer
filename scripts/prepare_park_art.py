@@ -29,6 +29,8 @@ POSES = {
     **{f"scream-{clip}": ((f"scream/{clip}.gif",), 120) for clip in ("one", "two", "three")},
     "consume": (("food/1_consume.gif",), 120),
     "drink": (("drink.gif",), 120),
+    "blowgun": (("blowgun.gif",), 120),
+    "head-hit": (("head_hit.gif",), 120),
     "kill": (("kill.gif",), 120),
     "punch": (("punch.gif",), 120),
     "death": (("death.gif",), 120),
@@ -124,7 +126,7 @@ def atlas(name, frames, durations):
 def actor_atlas(color, pose, sources, body_height):
     frames = []
     durations = []
-    preserve_details = pose.startswith("phone-")
+    preserve_details = pose.startswith("phone-") or pose == "blowgun"
     consumable = pose in {"consume", "drink"}
     for source in sources:
         with Image.open(ASSETS / "stickmen" / color / source) as image:
@@ -135,7 +137,7 @@ def actor_atlas(color, pose, sources, body_height):
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
     combat = pose in {"kill", "punch", "death", "pre-stun", "stun"}
-    fixed_crop = combat or consumable or pose == "phone-one"
+    fixed_crop = combat or consumable or pose in {"phone-one", "blowgun", "head-hit"}
     if fixed_crop:
         # A common crop preserves the sprite's origin across frames.
         # Phone One stands still. Its usual foot row excludes stray pixels under the shoes.
@@ -180,21 +182,43 @@ def scene_atlas(folder):
     return atlas(folder.name, frames, durations)
 
 
+def smoke_atlases():
+    source = ASSETS / "images" / "inventory" / "utilities" / "gif"
+    for index, phase in enumerate(("start", "hold", "end"), start=1):
+        frames = []
+        durations = []
+        with Image.open(source / f"smoke_used_{index}.gif") as image:
+            for frame in ImageSequence.Iterator(image):
+                durations.append(20 if phase == "start" else frame.info.get("duration", 100))
+                # Remove the sprite-sheet border and use brightness as opacity for the black background.
+                light = frame.convert("L").crop((3, 3, image.width - 3, image.height - 3))
+                light = light.resize((256, 256), Image.Resampling.LANCZOS)
+                cloud = Image.new("RGBA", light.size, (237, 236, 238))
+                cloud.putalpha(light.point(lambda value: min(255, max(0, round((value - 7) * 1.12)))))
+                frames.append(cloud)
+        name = f"smoke-{phase}"
+        yield name, atlas(name, frames, durations)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--poses", nargs="+", choices=POSES, help="Update only these actor poses in existing atlases")
+    parser.add_argument("--smoke", action="store_true", help="Update the smoke atlases in the existing manifest")
     args = parser.parse_args()
     OUTPUT.mkdir(exist_ok=True)
-    metadata = json.loads((OUTPUT / "atlases.json").read_text(encoding="utf-8")) if args.poses else {
+    incremental = args.poses or args.smoke
+    metadata = json.loads((OUTPUT / "atlases.json").read_text(encoding="utf-8")) if incremental else {
         folder.name: scene_atlas(folder)
         for folder in sorted((ASSETS / "maps" / "park").iterdir())
         if folder.is_dir() and (folder / "template.gif").exists()
     }
     for color in COLORS:
         for pose, (sources, body_height) in POSES.items():
-            if args.poses and pose not in args.poses:
+            if incremental and pose not in (args.poses or ()):
                 continue
             metadata[f"{color}-{pose}"] = actor_atlas(color, pose, sources, body_height)
+    if args.smoke or not incremental:
+        metadata.update(smoke_atlases())
     (OUTPUT / "atlases.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 

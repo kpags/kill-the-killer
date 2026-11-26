@@ -4,7 +4,8 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from '../shared/lobbyRules.js'
 import { winnerDisplayMs } from '../shared/combat.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark, stopParkInput } from './parkSession.js'
-import { attackInPark, spectateInPark } from './parkCombat.js'
+import { attackInPark, equipParkItem, spectateInPark } from './parkCombat.js'
+import { useSmokeInPark } from './parkSmoke.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const modeIds = Object.keys(JSON.parse(readFileSync(new URL('../data/game_modes.json', import.meta.url), 'utf8')))
@@ -204,7 +205,9 @@ export function createLobbyServer({
       let interactionError
       if (type === 'interact') interactionError = interactInPark(room.game, player.id, now)
       else if (type === 'play_action') interactionError = playParkAction(room.game, player.id, message.action, now)
-      else if (type === 'attack') interactionError = attackInPark(room.game, player.id, message.actorId, now)
+      else if (type === 'attack') interactionError = attackInPark(room.game, player.id, message.actorId, now, message.itemId)
+      else if (type === 'equip_item') interactionError = equipParkItem(room.game, player.id, message.itemId)
+      else if (type === 'use_smoke') interactionError = useSmokeInPark(room.game, player.id, now)
       else if (type === 'spectate_area') interactionError = spectateInPark(room.game, player.id, message.area)
       else return reject('This action is only available in the lobby.')
       if (interactionError) return reject(interactionError)

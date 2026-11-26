@@ -80,7 +80,7 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 | Interactions | `E` | Interact or hide |
 | Interactions | `F` | Toggle the Actions wheel |
 | Mouse | Mouse movement | Move the pointer |
-| Mouse | Left click | Kill or stun |
+| Mouse | Left click | Use the equipped item |
 | Mouse | Hold right click | Open the Inventory wheel and hover a section to see its effect. Release to equip the last hovered item. |
 | Menu | `P` or **Pause** | Open the pause menu |
 | Menu | Hold `Tab` | Open the player list dialog while held. Release to close it. In Hitman, show each player's score. In Last Man Standing, grey out eliminated players. |
@@ -161,7 +161,10 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 
 ### Implemented Park combat
 
-- Hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
+- Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. On impact, the target plays `head_hit.gif`, blinks red, moves at half speed for three seconds, then dies. The 60-second cooldown starts when the shot is used. Its inventory slot greys out and clears clockwise as it recharges.
+- Equip **Smoke** and click to deploy a 200 × 200 map-pixel cloud with the bottom of its animation aligned to your feet at deployment. It lasts 10 seconds from use. The first clip plays once at 20 ms per frame, the second loops at double speed until seven seconds have elapsed, and the third starts at seven seconds and holds its final frame until the smoke clears. Other players' views fade into haze on entry and clear when they leave or the cloud expires. Re-entering uses the original cloud deadline. The player who deployed the cloud keeps their normal view.
+
+- With **Fist** equipped, hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
 - NPCs, assigned targets, and any seated player can be killed. Range for seated models uses the nearest walkable point to their seat. The attacker plays the updated `kill.gif` once at 1.3× speed (about 208ms). The victim plays `death.gif` once at 1.3× speed (about 346ms) in the direction they were facing when hit. The corpse then fades out over two seconds. A lethal attack also takes priority when both players have each other as targets.
 - Killing an NPC or assigned target briefly flashes red around the killer's screen edges.
 - NPC and assigned-target kills play a random `kill` sound. A full stun plays a random `pre_stun` sound on impact and a random `full_stun` sound 0.45 seconds later, when the stun begins. A quick stun plays random `pre_stun` and `quick_stun` sounds together on impact. The **SFX** slider controls these sounds, and players and spectators in the same area hear the same selected clips.
@@ -181,6 +184,14 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-26 — Added smoke view fades on entry and exit, shared the cloud deadline with affected players, and set the opening clip to 20 ms per frame.
+
+- 2026-11-26 — Enlarged smoke to 200 × 200 map pixels, doubled animation speed, and moved deployment to the player's position.
+
+- 2026-11-26 — Required the equipped item for attacks, extended the Blowgun range, and added three-stage smoke with owner visibility and a 10-second duration.
+
+- 2026-11-26 — Added the Poisoned Blowgun with ranged targeting, synchronized shot and impact animations, delayed poison deaths, and a clockwise cooldown wipe.
 
 - 2026-11-25 — Added equipping the last hovered inventory item when the right mouse button is released.
 

@@ -2659,5 +2659,218 @@
       80,
       80
     ]
+  },
+  "blue-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "blue-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "green-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "green-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "orange-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "orange-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "purple-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "purple-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "red-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "red-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "yellow-blowgun": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "yellow-head-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      70,
+      70,
+      70,
+      70,
+      70,
+      70
+    ]
+  },
+  "smoke-start": {
+    "width": 256,
+    "height": 256,
+    "columns": 4,
+    "durations": [
+      20,
+      20,
+      20,
+      20,
+      20,
+      20
+    ]
+  },
+  "smoke-hold": {
+    "width": 256,
+    "height": 256,
+    "columns": 4,
+    "durations": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ]
+  },
+  "smoke-end": {
+    "width": 256,
+    "height": 256,
+    "columns": 4,
+    "durations": [
+      150,
+      150,
+      150,
+      150,
+      150,
+      150
+    ]
   }
 }

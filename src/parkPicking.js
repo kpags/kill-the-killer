@@ -11,7 +11,7 @@ export function frameAt(atlas, ms, once = false) {
 }
 
 // Actors are in painting order. Only the active hover can bridge gaps in its current frame.
-export function pickModel(actors, local, point, scale, alphaAt, retainedHover = null) {
+export function pickModel(actors, local, point, scale, alphaAt, retainedHover = null, range) {
   if (!isLiving(local) || !point) return null
   for (let index = actors.length - 1; index >= 0; index--) {
     const actor = actors[index]
@@ -22,8 +22,8 @@ export function pickModel(actors, local, point, scale, alphaAt, retainedHover = 
     const opaque = y >= 0 && y < 136 && alphaAt(actor, x, y) > 100
     const retained = retainedHover?.id === actor.id
     if (!opaque && !retained) continue
-    const ground = { area: actor.area, pose: actor.pose, x: actor.groundX ?? actor.x, y: actor.groundY ?? actor.y }
-    const eligible = actor.id !== local.id && isLiving(actor) && inAttackRange(local, ground)
+    const ground = { area: actor.area, pose: actor.groundPose ?? actor.pose, x: actor.groundX ?? actor.x, y: actor.groundY ?? actor.y }
+    const eligible = actor.id !== local.id && isLiving(actor) && inAttackRange(local, ground, range)
     if (opaque) return eligible ? actor.id : null
     if (eligible && retainedHover.contains(actor, x, y)) return actor.id
   }

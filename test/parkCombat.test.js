@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, colors, constrain } from '../shared/park.js'
-import { animationDuration, combatFeedbackMs, deathOpacity, killFlashMs } from '../shared/combat.js'
+import { animationDuration, blowgunCooldownMs, blowgunFlightMs, blowgunItem, blowgunRange, blowgunWindupMs,
+  combatFeedbackMs, deathOpacity, killFlashMs, poisonMs } from '../shared/combat.js'
 import { profileFill } from '../shared/profile.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark } from '../server/parkSession.js'
-import { advanceParkCombat, attackInPark, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
+import { advanceParkCombat, attackInPark, equipParkItem, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
+import { useSmokeInPark } from '../server/parkSmoke.js'
+import { smokeDurationMs, smokeHeight, smokeWidth } from '../shared/smoke.js'
 
 const deathDuration = 450 / 1.3
 const corpseDuration = deathDuration + 2000
@@ -21,6 +24,130 @@ function emptyGame(mode = 'last_man_standing', count = 4) {
   refreshParkTargets(game, 0, true)
   return game
 }
+
+test('the blowgun validates range, traces the shot, halves movement, and applies one delayed kill', () => {
+  for (const mode of ['last_man_standing', 'Hitman']) {
+    const game = emptyGame(mode)
+    const [shooter, victim, other, remote] = game.players.values()
+    assert.equal(blowgunRange(0), areas[0].width * 0.85)
+    assert.equal(blowgunRange(1), areas[1].width * 0.85)
+    Object.assign(shooter, { facing: 1, x: 50 + blowgunRange(0) })
+    Object.assign(victim, { x: 49.9 })
+    remote.area = 1
+    assert.match(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), /Equip/)
+    equipParkItem(game, shooter.id, blowgunItem)
+    assert.match(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), /430.95 pixels/)
+    assert.equal(shooter.blowgunReadyAt, undefined)
+    victim.x = 50
+    assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
+    assert.equal(shooter.facing, -1)
+    assert.equal(shooter.pose, 'blowgun')
+    const hitAt = blowgunWindupMs + blowgunFlightMs
+    assert.deepEqual(parkView(game, other.id, 0).blowgunTraces, [{
+      from: { x: shooter.x, y: 290, facing: -1 }, to: { x: 50, y: 290 }, startedAt: blowgunWindupMs, hitAt,
+    }])
+    assert.deepEqual(parkView(game, remote.id, 0).blowgunTraces, [])
+    assert.equal(parkView(game, other.id, 0).blowgunReadyAt, undefined)
+    advanceParkCombat(game, hitAt - 1)
+    assert.equal(victim.poison, undefined)
+    advanceParkCombat(game, hitAt)
+    assert.equal(victim.life, 'alive')
+    assert.equal(parkView(game, other.id, hitAt).actors.find(({ id }) => id === victim.id).poisonedAt, hitAt)
+    setParkInput(victim, { x: 1, y: 0, sprint: false }, hitAt)
+    stepPark(game, 100, hitAt + 100)
+    assert.ok(Math.abs(victim.x - 53.6) < 0.0001)
+    assert.deepEqual(parkView(game, shooter.id, hitAt + 100).blowgunTraces, [])
+    advanceParkCombat(game, hitAt + poisonMs - 1)
+    assert.equal(victim.life, 'alive')
+    advanceParkCombat(game, hitAt + poisonMs)
+    assert.equal(victim.life, 'dying')
+    assert.equal(victim.poison, null)
+    assert.equal(victim.victimCue.killerName, shooter.name)
+    assert.equal(victim.combat.startedAt, hitAt + poisonMs)
+    assert.equal(shooter.score, mode === 'Hitman' ? 100 : 0)
+    assert.match(attackInPark(game, shooter.id, other.id, blowgunCooldownMs - 1, blowgunItem), /recharging/)
+    assert.equal(attackInPark(game, shooter.id, other.id, blowgunCooldownMs, blowgunItem), undefined)
+  }
+})
+
+test('poisoned NPCs die with a penalty, while a target who changes area before impact escapes', () => {
+  const game = emptyGame()
+  const shooter = game.players.get('0')
+  const npc = { id: 'npc', color: 'green', facing: 1, pose: 'idle', area: 0, x: 220, y: 290 }
+  game.npcs.set(npc.id, npc)
+  const victim = game.players.get('1')
+  const hitAt = blowgunWindupMs + blowgunFlightMs
+  equipParkItem(game, shooter.id, blowgunItem)
+  assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
+  victim.area = 1
+  advanceParkCombat(game, hitAt)
+  assert.equal(victim.poison, undefined)
+  advanceParkCombat(game, blowgunCooldownMs)
+  assert.equal(attackInPark(game, shooter.id, npc.id, blowgunCooldownMs, blowgunItem), undefined)
+  const deathAt = blowgunCooldownMs + hitAt + poisonMs
+  advanceParkCombat(game, blowgunCooldownMs + hitAt)
+  assert.equal(shooter.penaltyUntil, undefined)
+  advanceParkCombat(game, deathAt)
+  assert.equal(npc.life, 'dying')
+  assert.equal(shooter.penaltyUntil, deathAt + 10_000)
+})
+
+test('the earlier poison deadline decides the final elimination when both expire in one tick', () => {
+  const game = emptyGame('last_man_standing', 2)
+  const [first, second] = game.players.values()
+  equipParkItem(game, first.id, blowgunItem)
+  equipParkItem(game, second.id, blowgunItem)
+  assert.equal(attackInPark(game, first.id, second.id, 0, blowgunItem), undefined)
+  assert.equal(attackInPark(game, second.id, first.id, 10, blowgunItem), undefined)
+  const bothExpired = blowgunWindupMs + blowgunFlightMs + poisonMs + 10
+  advanceParkCombat(game, bothExpired)
+  assert.equal(game.winner.id, first.id)
+  assert.equal(second.life, 'dying')
+  assert.equal(first.poison, null)
+})
+
+test('only the equipped item can be used and a smoke cloud obscures other players for at most ten seconds', () => {
+  const game = emptyGame()
+  const [owner, victim, observer, remote] = game.players.values()
+  owner.x = 180
+  observer.x += smokeWidth
+  remote.area = 1
+  assert.equal(smokeWidth, 200)
+  assert.equal(smokeHeight, 200)
+  assert.match(useSmokeInPark(game, owner.id, 0), /Equip Smoke/)
+  assert.match(equipParkItem(game, owner.id, '__proto__'), /unavailable/)
+  for (const item of ['smoke', 'Rock']) {
+    assert.equal(equipParkItem(game, owner.id, item), undefined)
+    assert.equal(parkView(game, owner.id, 0).equippedItem, item)
+    assert.match(attackInPark(game, owner.id, victim.id, 0, 'fist'), /Equip/)
+    assert.match(attackInPark(game, owner.id, victim.id, 0), /cannot attack/)
+  }
+  equipParkItem(game, owner.id, 'smoke')
+  assert.equal(useSmokeInPark(game, owner.id, 0), undefined)
+  const view = (actor, now = 0) => parkView(game, actor.id, now)
+  assert.deepEqual(view(observer).smokeClouds, [{ x: owner.x, y: owner.y, startedAt: 0, endsAt: smokeDurationMs }])
+  assert.deepEqual(view(remote).smokeClouds, [])
+  assert.equal(view(owner).smokeObscured, false)
+  assert.equal(view(observer).smokeObscured, false)
+  assert.equal(view(victim).smokeObscured, true)
+  assert.equal(view(victim).smokeUntil, view(owner).smokeClouds[0].endsAt)
+  assert.deepEqual(view(victim).actors.map(({ id }) => id), [victim.id])
+  assert.match(attackInPark(game, victim.id, owner.id, 0), /blocking your view/)
+
+  setParkInput(victim, { x: 1, y: 0, sprint: false }, 50)
+  stepPark(game, 100, 150)
+  assert.ok(victim.x > 200)
+  victim.x = owner.x + smokeWidth / 2 + 0.1
+  assert.equal(view(victim, 160).smokeObscured, false)
+  assert.equal(view(victim, 160).smokeUntil, 0)
+  victim.x = owner.x + smokeWidth / 2
+  const reentered = view(victim, smokeDurationMs - 1)
+  assert.equal(reentered.smokeObscured, true)
+  assert.equal(reentered.smokeUntil, smokeDurationMs)
+  stepPark(game, 0, smokeDurationMs)
+  assert.equal(view(victim, smokeDurationMs).smokeObscured, false)
+  assert.deepEqual(game.smokeClouds, [])
+})
 
 test('the player list shares match scores or eliminations across areas without actor details', () => {
   for (const mode of ['last_man_standing', 'Hitman']) {

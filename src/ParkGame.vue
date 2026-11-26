@@ -1,13 +1,15 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { areas, gameplayFeedbackMs } from '../shared/park.js'
-import { combatCueFadeMs, killFlashMs, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
+import { attackRange, blowgunCooldownMs, blowgunItem, blowgunRange, combatCueFadeMs, killFlashMs,
+  respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
 import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
 import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
 import AudioSettings from './AudioSettings.vue'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
 import inventory from '../data/inventory.json'
+import { smokeItem } from '../shared/smoke.js'
 
 const audioSettings = defineModel('audioSettings', { type: Object, required: true })
 const props = defineProps({
@@ -28,7 +30,11 @@ const directions = [
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const inventorySlots = Object.entries(inventory)
 const inventoryImages = import.meta.glob('../assets/images/inventory/**/*.png', { eager: true, import: 'default', query: '?url' })
-const equippedItem = ref('fist')
+const equippedItem = computed(() => props.state?.equippedItem ?? 'fist')
+const currentAttackRange = computed(() => equippedItem.value === blowgunItem ? blowgunRange(props.state?.area)
+  : equippedItem.value === 'fist' ? attackRange : 0)
+const blowgunCooldownSweep = ref(360)
+const attackOnCooldown = computed(() => equippedItem.value === blowgunItem && blowgunCooldownSweep.value < 360)
 const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
@@ -120,6 +126,7 @@ let fadedForeground = 0
 let activeCommand = false
 let pointer = null
 let hoveredActorId = null
+let smokeViewOpacity = 0
 
 function transmit() {
   const active = new Set([...pressed, ...pointers.values()])
@@ -207,10 +214,19 @@ function hoverInventoryItem(key) {
   lastHoveredInventoryItem = key
 }
 
-function equipInventorySelection() {
+async function equipInventorySelection() {
   if (!inventoryOpen.value) return
-  if (lastHoveredInventoryItem !== null) equippedItem.value = lastHoveredInventoryItem
+  const itemId = lastHoveredInventoryItem
   closeInventory()
+  if (itemId === null || itemId === equippedItem.value || activeCommand || props.reconnecting) return
+  activeCommand = true
+  try {
+    await props.command('equip_item', { itemId })
+  } catch (failure) {
+    showGameplayNotice(failure.message)
+  } finally {
+    activeCommand = false
+  }
 }
 
 function releaseInventory(event) {
@@ -254,15 +270,24 @@ function clearHover() {
 
 async function attack(event) {
   if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value || inventoryOpen.value
-    || activeCommand || props.reconnecting || !artReady.value) return
-  pointer = pointAt(event)
-  const { attackId } = draw(props.state, performance.now(), props.playerId, false, pointer, true)
-  if (!attackId) return
+    || activeCommand || props.reconnecting || !artReady.value || attackOnCooldown.value) return
+  const itemId = equippedItem.value
+  const usingSmoke = itemId === smokeItem
+  let actorId
+  if (!usingSmoke) {
+    if (!currentAttackRange.value || props.state.smokeObscured) return
+    pointer = pointAt(event)
+    const { attackId } = draw(props.state, performance.now(), props.playerId, false,
+      pointer, true, null, currentAttackRange.value)
+    if (!attackId) return
+    actorId = attackId
+  }
   activeCommand = true
   releaseMovement()
   refocus()
   try {
-    await props.command('attack', { actorId: attackId })
+    if (usingSmoke) await props.command('use_smoke')
+    else await props.command('attack', { actorId, itemId })
   } catch (failure) {
     showGameplayNotice(failure.message)
   } finally {
@@ -420,12 +445,17 @@ async function exitGame() {
 function render(now) {
   if (props.state) {
     const label = overheadPrompt.value
-    const { faded, head, hoveredId, serverNow, feedbackTop, penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
+    const { faded, head, hoveredId, serverNow, feedbackTop, smokeOpacity = 0,
+      penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
-        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting ? null : pointer, false, gameplayNotice.value)
+        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || attackOnCooldown.value ? null : pointer,
+        false, gameplayNotice.value, currentAttackRange.value)
+    const cooldownFraction = Math.max(0, Math.min(1, ((props.state.blowgunReadyAt ?? serverNow) - serverNow) / blowgunCooldownMs))
+    blowgunCooldownSweep.value = Math.floor((1 - cooldownFraction) * 360)
     penaltyActive.value = penalized
     penaltyStrength.value = strength
     fadedForeground = faded
+    smokeViewOpacity = smokeOpacity
     hoveredActorId = hoveredId
     canvas.value.style.cursor = hoveredId && canAct.value ? 'pointer' : 'default'
     if (label && head) {
@@ -534,6 +564,12 @@ function readState() {
     actionsOpen: actionsOpen.value,
     inventoryOpen: inventoryOpen.value,
     equippedItem: equippedItem.value,
+    smokeObscured: props.state?.smokeObscured ?? false,
+    smokeUntil: props.state?.smokeUntil ?? 0,
+    smokeViewOpacity,
+    smokeClouds: props.state?.smokeClouds ?? [],
+    blowgunCooldownSweep: blowgunCooldownSweep.value,
+    blowgunTraces: props.state?.blowgunTraces ?? [],
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
@@ -644,6 +680,8 @@ defineExpose({ readState })
         <li v-for="[key, item] in inventorySlots" :key="key" class="park-inventory-slot"
           :aria-current="key === equippedItem ? 'true' : undefined" :title="item.name">
           <img :src="inventoryImages[`../${item.display_image}`]" :alt="item.name" draggable="false" />
+          <span v-if="key === blowgunItem && blowgunCooldownSweep < 360" class="park-inventory-cooldown"
+            :style="{ '--cooldown-sweep': `${blowgunCooldownSweep}deg` }" role="img" aria-label="Recharging"></span>
         </li>
       </ol>
 
@@ -989,6 +1027,7 @@ defineExpose({ readState })
 }
 
 .park-inventory-slot {
+  position: relative;
   display: grid;
   place-items: center;
   width: clamp(42px, 11vw, 58px);
@@ -1009,6 +1048,16 @@ defineExpose({ readState })
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.park-inventory-cooldown {
+  position: absolute;
+  inset: 4px;
+  border-radius: 8px;
+  background: #16141c55;
+  backdrop-filter: grayscale(1) brightness(0.5);
+  mask-image: conic-gradient(transparent var(--cooldown-sweep), black 0);
+  pointer-events: none;
 }
 
 .park-game.park-penalized {

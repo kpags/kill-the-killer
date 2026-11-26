@@ -12,7 +12,7 @@
     "poison_blowgun": {
         "name": "Poisoned Blowgun",
         "effect": "Long range attack. Slows the target for 3 seconds before dying.",
-        "max_distance": "150px",
+        "max_distance": "85% of the area width",
         "type": {
             "main": "attack",
             "sub": "range"
@@ -22,8 +22,8 @@
     "smoke": {
         "name": "Smoke",
         "effect": "Creates a smoke screen that obscures vision if within the smoke area.",
-        "width": "50px",
-        "height": "50px",
+        "width": "200px",
+        "height": "200px",
         "type": {
             "main": "utilities",
             "sub": "throwable"
@@ -33,8 +33,8 @@
     "Rock": {
         "name": "Rock",
         "effect": "Stuns the target for 3 seconds when hit.",
-        "width": "50px",
-        "height": "50px",
+        "width": "200px",
+        "height": "200px",
         "type": {
             "main": "utilities",
             "sub": "throwable"
