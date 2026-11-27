@@ -2984,5 +2984,101 @@
       30,
       30
     ]
+  },
+  "blue-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "green-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "orange-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "purple-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "red-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
+  },
+  "yellow-face-hit": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60,
+      60
+    ]
   }
 }

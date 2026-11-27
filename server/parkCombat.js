@@ -186,8 +186,10 @@ function advanceProjectiles(game, now) {
       shot.resolved = true
       if (targetInArea && shot.itemId === rockItem) stunWithRock(game, shot, victim)
       else if (targetInArea && !victim.poison) {
+        const approach = Math.sign(shot.from.x - shot.to.x)
+        const pose = approach === victim.facing ? 'face-hit' : 'head-hit'
         victim.poison = { attackerId: shot.attackerId, killerName: shot.killerName, isTarget: shot.isTarget,
-          hitAt: shot.hitAt, endsAt: shot.hitAt + poisonMs }
+          hitAt: shot.hitAt, endsAt: shot.hitAt + poisonMs, impact: { pose, facing: victim.facing } }
       }
     }
     return now < keepUntil

@@ -341,7 +341,7 @@ export function parkView(game, playerId, now) {
       actionStartedAt: actionStartedAt ?? undefined,
       oneShot: mode === 'panic' && actionStartedAt != null ? true : undefined,
       ...(modelPenaltyUntil > now ? { penaltyGlowUntil: modelPenaltyUntil } : {}),
-      ...(poison ? { poisonedAt: poison.hitAt, poisonedUntil: poison.endsAt } : {}),
+      ...(poison ? { poisonedAt: poison.hitAt, poisonedUntil: poison.endsAt, poisonImpact: poison.impact } : {}),
       ...(rockStunnedUntil > now && (!life || life === 'alive') ? {
         pose: 'stun', groundPose: pose, combat: { startedAt: rockStunnedUntil - stunMs, endsAt: rockStunnedUntil }, oneShot: undefined,
       } : {}),

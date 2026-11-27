@@ -16,6 +16,8 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const feedbackColors = { rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff', information: '#ffffff' }
 const penaltyGlowPadding = 22
 const penaltyGlowColor = '#ff1737'
+const blowgunHeadHeight = standingHeight * 0.81
+const blowgunImpactMs = 220
 
 function paintFeedback(ctx, feedback, head, now, width) {
   const hasInformation = feedback.some(({ kind }) => kind === 'information')
@@ -57,12 +59,12 @@ function paintFeedback(ctx, feedback, head, now, width) {
 }
 
 function paintBlowgunTraces(ctx, traces, now, area) {
-  const headHeight = standingHeight * area.modelScale * 0.81
+  const headHeight = blowgunHeadHeight * area.modelScale
   for (const { from, to, startedAt, hitAt } of traces) {
     if (now < startedAt || now >= hitAt + blowgunTraceFadeMs) continue
     const phase = Math.min(1, (now - startedAt) / (hitAt - startedAt))
     const tail = Math.max(0, phase - 0.38)
-    const muzzle = from.x + from.facing * 13 * area.modelScale
+    const muzzle = from.x + from.facing * Math.min(13 * area.modelScale, Math.abs(to.x - from.x) / 2)
     const dx = to.x - muzzle
     const dy = to.y - from.y
     ctx.save()
@@ -76,6 +78,33 @@ function paintBlowgunTraces(ctx, traces, now, area) {
     ctx.stroke()
     ctx.restore()
   }
+}
+
+function paintBlowgunImpact(ctx, x, y, scale, age) {
+  const progress = age / blowgunImpactMs
+  const radius = 5 + 12 * (reducedMotion.matches ? 0.35 : progress)
+  ctx.save()
+  ctx.translate(x, y - blowgunHeadHeight * scale)
+  ctx.scale(scale, scale)
+  ctx.globalAlpha = 1 - progress
+  ctx.fillStyle = '#fff6d4'
+  ctx.beginPath()
+  ctx.arc(0, 0, 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#ffdc88'
+  ctx.lineWidth = 2
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  for (let ray = 0; ray < 6; ray++) {
+    const angle = (ray + 0.3) * Math.PI / 3
+    const dx = Math.cos(angle)
+    const dy = Math.sin(angle)
+    const reach = radius + 5 + ray % 2 * 3
+    ctx.moveTo(dx * radius, dy * radius)
+    ctx.lineTo(dx * reach, dy * reach)
+  }
+  ctx.stroke()
+  ctx.restore()
 }
 
 function paintFrame(ctx, atlas, index, x = 0, y = 0, drawWidth = atlas.width, drawHeight = atlas.height) {
@@ -414,14 +443,16 @@ export function createParkRenderer(canvas, art) {
       const previous = visible.get(actor.id)
       const groundPose = actor.groundPose ?? actor.pose
       const poseTime = previous?.groundPose === groundPose ? previous.poseTime : time - (actor.animationOffset ?? 0)
-      const headHitAge = serverNow - actor.poisonedAt
-      const headHit = art[`${actor.color}-head-hit`]
-      const pose = actor.pose !== 'stun' && headHitAge >= 0 && headHitAge < headHit.duration ? 'head-hit' : actor.pose
+      const impactAge = serverNow - actor.poisonedAt
+      const impactPose = actor.poisonImpact?.pose ?? 'head-hit'
+      const impactAtlas = art[`${actor.color}-${impactPose}`]
+      const reacting = impactAge >= 0 && impactAge < impactAtlas.duration
+      const pose = reacting ? impactPose : actor.pose
       const isSeated = pose === 'sit'
-      const atlas = art[`${actor.color}-${pose}`]
+      const atlas = reacting ? impactAtlas : art[`${actor.color}-${pose}`]
       const playbackRate = actor.pose === 'talk' || actor.pose.startsWith('phone-') ? crowdPlaybackRate : 1
       let age = (time - poseTime) * playbackRate
-      if (pose === 'head-hit') age = headHitAge
+      if (reacting) age = impactAge
       else if (actor.combat) age = (serverNow - actor.combat.startedAt) * combatPlaybackRate(pose)
       else if (actor.actionStartedAt != null) age = serverNow - actor.actionStartedAt
       const frame = frameAt(atlas, age, actor.oneShot || oneShotPoses.has(pose))
@@ -430,6 +461,7 @@ export function createParkRenderer(canvas, art) {
         && !previous.combat && !actor.combat && previous.generation === actor.generation
       return {
         ...actor,
+        facing: reacting ? actor.poisonImpact?.facing ?? actor.facing : actor.facing,
         pose,
         groundPose,
         poseTime,
@@ -540,6 +572,10 @@ export function createParkRenderer(canvas, art) {
         ctx.drawImage(tints.get(key), -80, -footRow)
       }
       ctx.restore()
+      const impactAge = serverNow - actor.poisonedAt
+      if (impactAge >= 0 && impactAge < blowgunImpactMs) {
+        paintBlowgunImpact(ctx, actor.x, actor.y, area.modelScale, impactAge)
+      }
     }
 
     if (state.rockThrows?.length) paintRockThrows(ctx, art['rock-projectile'], state.rockThrows, serverNow, area)

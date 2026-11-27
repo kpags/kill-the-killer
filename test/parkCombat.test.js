@@ -71,6 +71,30 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
   }
 })
 
+test('blowgun selects and preserves the reaction facing at impact for shots from either side', () => {
+  const hitAt = blowgunWindupMs + blowgunFlightMs
+  for (const approach of [-1, 0, 1]) {
+    for (const facing of [-1, 1]) {
+      const game = emptyGame()
+      const [shooter, victim] = game.players.values()
+      shooter.x += approach * 60
+      if (approach === 0) shooter.y += 25
+      victim.facing = -facing
+      equipParkItem(game, shooter.id, blowgunItem)
+      assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
+      victim.facing = facing
+      advanceParkCombat(game, hitAt)
+      victim.facing = -facing
+      const pose = approach === facing ? 'face-hit' : 'head-hit'
+      for (const viewer of [shooter, victim]) {
+        const visible = parkView(game, viewer.id, hitAt + 50).actors.find(({ id }) => id === victim.id)
+        assert.equal(visible.facing, -facing)
+        assert.deepEqual(visible.poisonImpact, { pose, facing })
+      }
+    }
+  }
+})
+
 test('poisoned NPCs die with a penalty, while a target who changes area before impact escapes', () => {
   const game = emptyGame()
   const shooter = game.players.get('0')

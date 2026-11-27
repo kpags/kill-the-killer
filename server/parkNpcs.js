@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { areas, colors, constrain, groundRange, sprintSpeed, walkSpeed } from '../shared/park.js'
+import { areas, colors, constrain, groundRange, walkSpeed } from '../shared/park.js'
 import { claimSeat } from './parkSeats.js'
 import { animationDuration, isLiving, isRockStunned, poisonSpeedFactor, screamPoses } from '../shared/combat.js'
 import { queueParkSound } from './parkSounds.js'
@@ -8,6 +8,7 @@ const phonePoses = ['phone-one', 'phone-two', 'phone-three']
 const directions = [-1, 1]
 const maxCrowdSize = 3
 const screamDelay = 1000
+const fleeSpeed = 121
 const returnDelay = 5000
 const foodVisitInterval = 10_000
 // In left-to-right order, the outer talkers always face inward.
@@ -292,7 +293,7 @@ function stepPanic(game, areaIndex, panic, elapsedMs, now) {
     actor.facing = actor.fleeDirection
     actor.actionStartedAt = null
     const edge = actor.fleeDirection < 0 ? area.left : area.right
-    const distance = sprintSpeed * Math.min(elapsedMs, now - actor.screamEndsAt) / 1000
+    const distance = fleeSpeed * Math.min(elapsedMs, now - actor.screamEndsAt) / 1000
     if (walkTo(actor, area, constrain(area, edge, actor.y), distance)) retireNpc(game, actor, Infinity)
     else fleeing = true
   }

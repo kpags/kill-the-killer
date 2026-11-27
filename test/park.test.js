@@ -144,10 +144,14 @@ test('movement follows area edges in order and leaves stationary bots behind', (
   assert.deepEqual([player.x, player.y], [172, 215])
 })
 
-test('sprinting drains for five seconds and recovers in three-second steps', () => {
+test('players sprint at 181.5 map pixels per second, drain stamina for five seconds, and recover in three-second steps', () => {
   const game = createEmptyPark(roster())
   const player = game.players.get('0')
-  for (let now = 50; now <= 5000; now += 50) {
+  const startX = player.x
+  setParkInput(player, { x: 1, y: 0, sprint: true }, 50)
+  stepPark(game, 50, 50)
+  assert.ok(Math.abs(player.x - startX - 181.5 * 0.05) < 0.0001)
+  for (let now = 100; now <= 5000; now += 50) {
     setParkInput(player, { x: 1, y: 0, sprint: true }, now)
     stepPark(game, 50, now)
   }

@@ -31,6 +31,7 @@ POSES = {
     "drink": (("drink.gif",), 120),
     "blowgun": (("blowgun.gif",), 120),
     "head-hit": (("head_hit.gif",), 120),
+    "face-hit": (("face_hit.gif",), 120),
     "throw": (("throw.gif",), 120),
     "kill": (("kill.gif",), 120),
     "punch": (("punch.gif",), 120),
@@ -138,7 +139,7 @@ def actor_atlas(color, pose, sources, body_height):
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
     combat = pose in {"kill", "punch", "death", "pre-stun", "stun", "throw"}
-    fixed_crop = combat or consumable or pose in {"phone-one", "blowgun", "head-hit"}
+    fixed_crop = combat or consumable or pose in {"phone-one", "blowgun", "head-hit", "face-hit"}
     if fixed_crop:
         # A common crop preserves the sprite's origin across frames.
         # Phone One stands still. Its usual foot row excludes stray pixels under the shoes.
