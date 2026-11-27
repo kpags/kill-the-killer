@@ -3,13 +3,13 @@
         "Kill each other until only one player remains.",
         "Utilize blending in with the crowd and hiding to survive or kill your targets.",
         "Killing an NPC will have your location exposed to all players as penalty.",
-        "The last player standing wins the game."
+        "The last player standing wins. If more than one player is alive after three minutes, play continues in one-minute overtime rounds."
     ],
     "Hitman": [
         "Kill your targets to gain kill score.",
         "Utilize blending in with the crowd and hiding to survive or kill your targets.",
         "Killing an NPC will have your location exposed to all players as penalty.",
         "The stealthier kill approach, the higher kill score you gain.",
-        "Player with the highest score wins the game."
+        "The match lasts three minutes. Highest score wins. Ties go to the player with fewer deaths, then fewer penalties. Players still tied share the win."
     ]
 }

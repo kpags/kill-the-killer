@@ -1,5 +1,14 @@
 export const capacity = 6
 
+export function roomStartError(slots) {
+  const players = slots.filter(Boolean)
+  if (players.length < 2) return 'Add a bot or invite another player to start.'
+  if (players.some((player) => !player.isBot && (!player.connected || !player.ready))) {
+    return 'All human players must be connected and ready.'
+  }
+  return ''
+}
+
 export function mapName(id) {
   return id.split(/[-_\s]+/).filter(Boolean).map((word) => (
     word[0].toUpperCase() + word.slice(1).toLowerCase()

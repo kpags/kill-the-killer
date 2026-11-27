@@ -6,13 +6,27 @@ import { createLobbyServer } from '../server/lobby.js'
 import { createParkSession } from '../server/parkSession.js'
 import { areas, constrain } from '../shared/park.js'
 
-function createGameWithPlayersInMain(players, random, modeId) {
-  const game = createParkSession(players, random, modeId)
+function createGameWithPlayersInMain(players, random, modeId, startedAt) {
+  const game = createParkSession(players, random, modeId, startedAt)
   const positions = [[130, 290], [215, 311], [338, 290]]
   for (const [index, actor] of [...game.players.values()].entries()) {
     const [x, y] = positions[index]
     Object.assign(actor, { area: 0, x, y })
   }
+  return game
+}
+
+function createBotEncounter(players, random, modeId, startedAt) {
+  const game = createParkSession(players, random, modeId, startedAt)
+  game.npcs.clear()
+  game.walkers.length = 0
+  const [host, ...others] = game.players.values()
+  const bot = others.find((actor) => actor.isBot)
+  const guests = others.filter((actor) => !actor.isBot)
+  game.targetOrder = [bot.id, host.id, ...guests.map(({ id }) => id)]
+  Object.assign(host, { area: 0, x: 215, y: 295 })
+  Object.assign(bot, { area: 0, x: 200, y: 295 })
+  for (const guest of guests) Object.assign(guest, { area: 1, x: 200, y: 295 })
   return game
 }
 
@@ -52,6 +66,62 @@ async function setup(context, options) {
     }
   }
 }
+
+async function ready(client, playerId) {
+  assert.equal((await client.command('set_ready', { playerId, ready: true })).error, undefined)
+}
+
+test('Start requires two occupied slots and every human connected and ready', { timeout: 5000 }, async (context) => {
+  const connect = await setup(context, { reconnectGraceMs: 3000 })
+  const host = await connect()
+  const created = await host.command('create')
+  await ready(host, created.playerId)
+  assert.match((await host.command('start')).error, /Add a bot or invite/)
+
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  assert.match((await host.command('start')).error, /connected and ready/)
+  await ready(guest, joined.playerId)
+  guest.socket.close()
+  await host.waitFor(({ room }) => room?.slots[1]?.connected === false)
+  assert.match((await host.command('start')).error, /connected and ready/)
+  const replacement = await connect()
+  assert.equal((await replacement.command('resume', { token: joined.token })).error, undefined)
+  assert.equal((await host.command('start')).error, undefined)
+  const { state } = await replacement.waitFor(({ type }) => type === 'park')
+  assert.ok(state.matchEndsAt - state.serverTime <= 180_000 && state.matchEndsAt - state.serverTime > 179_000)
+})
+
+test('a timed Hitman tie broadcasts all winners and closes the room after the victory', { timeout: 6500 }, async (context) => {
+  const connect = await setup(context, {
+    createGame(players, random, modeId, startedAt) {
+      const game = createParkSession(players, random, modeId, startedAt)
+      game.matchEndsAt = startedAt + 200
+      return game
+    },
+  })
+  const host = await connect()
+  const created = await host.command('create')
+  await host.command('select_mode', { modeId: 'Hitman' })
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  await host.command('add_bot', { index: 2 })
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
+  assert.equal((await host.command('start')).error, undefined)
+  const [hostEnd, guestEnd] = await Promise.all([
+    host.waitFor(({ state }) => state?.result),
+    guest.waitFor(({ state }) => state?.result),
+  ])
+  assert.deepEqual(hostEnd.state.result, guestEnd.state.result)
+  assert.deepEqual(hostEnd.state.result.winners.map(({ name }) => name), ['Player 1', 'Player 2', 'Bot3'])
+  assert.equal(hostEnd.state.matchEnded, true)
+  assert.match((await guest.command('equip_item', { itemId: 'Rock' })).error, /match has ended/)
+  await Promise.all([
+    host.waitFor(({ type }) => type === 'room_closed', 4000),
+    guest.waitFor(({ type }) => type === 'room_closed', 4000),
+  ])
+})
 
 test('rooms synchronize human numbering and enforce slot and player permissions', { timeout: 5000 }, async (context) => {
   const connect = await setup(context, { availableMapIds: ['park', 'quiet_lane'] })
@@ -109,8 +179,10 @@ test('Actions wheel commands broadcast the same chosen clip and stop on movement
   const host = await connect()
   const created = await host.command('create')
   const guest = await connect()
-  await guest.command('join', { code: created.room.code })
-  await host.command('start')
+  const joined = await guest.command('join', { code: created.room.code })
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
+  assert.equal((await host.command('start')).error, undefined)
   const playerIn = ({ state }) => state?.actors.find(({ id }) => id === created.playerId)
 
   assert.match((await host.command('play_action', { action: 'idle' })).error, /unavailable/)
@@ -139,7 +211,9 @@ test('the penalty clip reaches only the penalized player and their assigned hunt
     const { playerId } = await client.command('join', { code: created.room.code })
     guests.push({ client, playerId })
   }
-  await host.command('start')
+  await ready(host, created.playerId)
+  await Promise.all(guests.map(({ client, playerId }) => ready(client, playerId)))
+  assert.equal((await host.command('start')).error, undefined)
   const inGame = ({ type }) => type === 'park'
   const states = await Promise.all(guests.map(({ client }) => client.waitFor(inGame)))
   const hunterIndex = states.findIndex(({ state }) => state.target?.name === 'Player 1')
@@ -199,7 +273,9 @@ test('combat broadcasts the same winner and returns all players home three secon
   const guest = await connect()
   const joined = await guest.command('join', { code: created.room.code })
   assert.match((await host.command('attack', { actorId: joined.playerId })).error, /Unknown room command/)
-  await host.command('start')
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
+  assert.equal((await host.command('start')).error, undefined)
   assert.match((await guest.command('spectate_area', { area: 1 })).error, /not spectating/)
   assert.match((await host.command('attack', { actorId: joined.playerId })).error, /20 pixels/)
   await approach(host, created.playerId, joined.playerId)
@@ -236,12 +312,12 @@ test('combat broadcasts the same winner and returns all players home three secon
   assert.deepEqual(hostCrowd.sounds, guestCrowd.sounds)
   assert.ok(screamsIn(hostPanic).every(({ actionStartedAt }) => actionStartedAt === corpse.combat.endsAt + 1000))
   const [hostEnd, end] = await Promise.all([
-    host.waitFor(({ state }) => state?.winner, 4000),
-    replacement.waitFor(({ state }) => state?.spectating && state.winner, 4000),
+    host.waitFor(({ state }) => state?.result, 4000),
+    replacement.waitFor(({ state }) => state?.spectating && state.result, 4000),
   ])
   const winnerShownAt = performance.now()
-  assert.equal(end.state.winner.id, created.playerId)
-  assert.deepEqual(hostEnd.state.winner, end.state.winner)
+  assert.equal(end.state.result.winners[0].id, created.playerId)
+  assert.deepEqual(hostEnd.state.result, end.state.result)
   assert.equal(hostEnd.state.serverTime, end.state.serverTime)
   assert.ok(end.state.serverTime >= corpse.combat.startedAt + 3300)
   assert.equal(end.state.victimCue, undefined)
@@ -253,7 +329,7 @@ test('combat broadcasts the same winner and returns all players home three secon
   const spectator = await connect()
   await spectator.command('resume', { token: joined.token })
   const recoveredSpectator = await spectator.waitFor(({ state }) => state?.spectating && state.area === 5)
-  assert.equal(recoveredSpectator.state.winner.id, created.playerId)
+  assert.equal(recoveredSpectator.state.result.winners[0].id, created.playerId)
   const closed = ({ type }) => type === 'room_closed'
   const finished = await Promise.all([host.waitFor(closed, 4000), spectator.waitFor(closed, 4000)])
   assert.ok(performance.now() - winnerShownAt >= 2950)
@@ -269,7 +345,9 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
   await host.command('select_mode', { modeId: 'Hitman' })
   const guest = await connect()
   const joined = await guest.command('join', { code: created.room.code })
-  await host.command('start')
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
+  assert.equal((await host.command('start')).error, undefined)
   await approach(host, created.playerId, joined.playerId)
   assert.equal((await host.command('attack', { actorId: joined.playerId })).error, undefined)
   const death = await guest.waitFor(({ state }) => state?.life === 'dying')
@@ -305,7 +383,7 @@ test('Hitman reconnect during death recovers the five-second respawn and a green
   assert.ok(respawned.state.serverTime - startedAt >= 5000)
   assert.equal(respawned.state.respawnMs, 0)
   assert.equal(respawned.state.victimCue, undefined)
-  assert.equal(respawned.state.winner, null)
+  assert.equal(respawned.state.result, null)
   const actor = respawned.state.actors.find(({ id }) => id === joined.playerId)
   const point = constrain(areas[respawned.state.area], actor.x, actor.y)
   assert.ok(Math.abs(point.x - actor.x) < 0.11 && Math.abs(point.y - actor.y) < 0.11)
@@ -327,7 +405,9 @@ test('reconnecting a stunned killer preserves the shared stun deadline and targe
     const joined = await client.command('join', { code: created.room.code })
     members.push({ client, ...joined })
   }
-  await host.command('start')
+  await ready(host, created.playerId)
+  await Promise.all(members.map(({ client, playerId }) => ready(client, playerId)))
+  assert.equal((await host.command('start')).error, undefined)
   for (const member of members) {
     member.game = await member.client.waitFor(({ type }) => type === 'park')
   }
@@ -401,6 +481,8 @@ test('mode selection is host-only, synchronized, and restored on join and reconn
   assert.equal(restored.room.selectedModeId, 'last_man_standing')
   assert.equal(restored.room.slots[1].ready, true)
 
+  assert.match((await host.command('start')).error, /connected and ready/)
+  await ready(lateGuest, lateJoined.playerId)
   assert.equal((await host.command('start')).error, undefined)
   assert.match((await host.command('select_mode', { modeId: 'Hitman' })).error, /only available in the lobby/)
   await host.command('leave')
@@ -444,6 +526,8 @@ test('host Start opens Park for the current roster and reconnect recovers the sa
   await host.command('add_bot', { index: 2 })
   const roster = await guest.waitFor(({ room }) => room?.slots.filter(Boolean).length === 3)
   const playerIds = new Set(roster.room.slots.filter(Boolean).map(({ id }) => id))
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
   const hostStart = new Promise((resolve) => {
     const captureStart = (event) => {
       const message = JSON.parse(event.toString())
@@ -482,9 +566,47 @@ test('host Start opens Park for the current roster and reconnect recovers the sa
   assert.ok((actor.x - original.x) * direction > 0)
   await host.command('leave')
   await replacement.waitFor(({ type }) => type === 'room_closed')
-  const soloRoom = await host.command('create')
+})
+
+test('a solo player can complete Last Man Standing against an Add Bot opponent', { timeout: 12_000 }, async (context) => {
+  const connect = await setup(context, { createGame: createBotEncounter })
+  const host = await connect()
+  const created = await host.command('create')
+  assert.equal((await host.command('add_bot', { index: 1 })).error, undefined)
+  assert.match((await host.command('start')).error, /connected and ready/)
+  await ready(host, created.playerId)
   assert.equal((await host.command('start')).error, undefined)
-  const solo = await host.waitFor(({ type }) => type === 'park')
-  assert.equal(solo.state.actors.filter(({ id }) => id === soloRoom.playerId).length, 1)
-  assert.ok(solo.state.actors.some(({ pose }) => pose === 'talk' || pose.startsWith('phone-')))
+  const death = await host.waitFor(({ state }) => state?.life === 'dying', 3000)
+  assert.equal(death.state.victimCue.killerName, 'Bot2')
+  const bot = death.state.actors.find(({ id }) => id !== created.playerId)
+  assert.equal(bot.pose, 'kill')
+  const final = await host.waitFor(({ state }) => state?.result, 5000)
+  assert.equal(final.state.result.winners[0].id, bot.id)
+  await host.waitFor(({ type }) => type === 'room_closed', 4000)
+  assert.match((await host.command('join', { code: created.room.code })).error, /not found/)
+})
+
+test('a mixed room syncs bot combat and does not let a client take over the bot seat', { timeout: 6000 }, async (context) => {
+  const connect = await setup(context, { createGame: createBotEncounter })
+  const host = await connect()
+  const created = await host.command('create')
+  const guest = await connect()
+  const joined = await guest.command('join', { code: created.room.code })
+  await host.command('add_bot', { index: 2 })
+  const { room } = await guest.waitFor(({ room }) => room?.slots[2]?.isBot)
+  const bot = room.slots[2]
+  const stranger = await connect()
+  assert.equal((await stranger.command('resume', { token: bot.id })).code, 'SESSION_ENDED')
+  await ready(host, created.playerId)
+  await ready(guest, joined.playerId)
+  assert.equal((await host.command('start')).error, undefined)
+  const spoofedAttack = await guest.command('attack', { playerId: bot.id, actorId: created.playerId })
+  assert.match(spoofedAttack.error, /model is unavailable/)
+  const [death, guestView] = await Promise.all([
+    host.waitFor(({ state }) => state?.life === 'dying', 3000),
+    guest.waitFor(({ state }) => state?.playerList.some(({ name, eliminated }) => name === 'Player 1' && eliminated), 3000),
+  ])
+  assert.equal(death.state.victimCue.killerName, bot.name)
+  assert.equal(guestView.state.result, null)
+  assert.ok(guestView.state.actors.every(({ id }) => id !== bot.id))
 })

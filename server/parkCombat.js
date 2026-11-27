@@ -5,12 +5,27 @@ import { animationDuration, blowgunFlightMs, blowgunItem,
   stunMs, targetSearchMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideTransitionMs, profileBarSize, profileKillAward } from '../shared/profile.js'
 import { queueNpcPanic } from './parkNpcs.js'
+import { finishHitmanMatch, resolveLastManStanding } from './parkMatch.js'
 import { queueParkSound, setPenaltySound } from './parkSounds.js'
 import { smokeObscuredUntil } from './parkSmoke.js'
 import inventory from '../data/inventory.json' with { type: 'json' }
 
 const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const pick = (values, random) => values[Math.floor(random() * values.length)] ?? null
+const combatFeedLimit = 3
+const combatFeedMs = 10_000
+
+function addCombatFeed(game, kind, { name, color }, now, target) {
+  const entries = (game.combatFeed.get(kind) ?? []).filter(({ expiresAt }) => expiresAt > now)
+  entries.push({
+    id: ++game.combatFeedSequence,
+    kind,
+    actor: { name, color },
+    ...(target && { target: { name: target.name, color: target.color } }),
+    expiresAt: now + combatFeedMs,
+  })
+  game.combatFeed.set(kind, entries.slice(-combatFeedLimit))
+}
 
 function addCombatFeedback(actor, kind, text, now, { points, subject = actor } = {}) {
   const feedback = (actor.combatFeedback ?? []).filter(({ kind, startedAt }) => now - startedAt < combatFeedbackDuration(kind))
@@ -20,6 +35,7 @@ function addCombatFeedback(actor, kind, text, now, { points, subject = actor } =
 }
 
 function applyNpcPenalty(game, actor, now) {
+  if (game.modeId === 'Hitman') actor.penalties++
   actor.penaltyUntil = now + npcPenaltyMs
   game.penaltyNotices = game.penaltyNotices
     .filter(({ playerId, expiresAt }) => expiresAt > now && game.players.has(playerId))
@@ -47,7 +63,7 @@ export function refreshParkTargets(game, now, initial = false) {
   const hitman = game.modeId === 'Hitman'
   const order = hitman ? [] : game.targetOrder.filter((id) => isLiving(game.players.get(id)))
   for (const actor of game.players.values()) {
-    if (game.winner || !isLiving(actor)) {
+    if (game.result || !isLiving(actor)) {
       setTarget(game, actor, null)
       continue
     }
@@ -88,20 +104,9 @@ function finishCombat(actor) {
   Object.assign(actor, { mode: 'free', pose: 'idle', combat: null, input: stopped })
 }
 
-export function resolveParkWinner(game, now) {
-  if (game.modeId !== 'last_man_standing' || game.initialPlayerCount < 2 || game.winner) return
-  const living = [...game.players.values()].filter(isLiving)
-  if (living.length !== 1) return
-  const actor = living[0]
-  game.winner = { id: actor.id, name: actor.name, color: actor.color }
-  game.winnerAt = Math.max(now, ...[...game.players.values()].map((player) => Math.max(
-    player.vanishesAt ?? now, player.victimCue?.kind === 'killed' ? victimCueEndsAt(player.victimCue) : now,
-  )))
-  for (const player of game.players.values()) player.input = stopped
-}
-
-function killModel(game, victim, { actor, isTarget, killerName }, now) {
+function killModel(game, victim, { actor, isTarget, killerName, killerColor }, now) {
   const isNpc = game.npcs.has(victim.id)
+  if (!isNpc && game.modeId === 'Hitman') victim.deaths++
   victim.poison = null
   beginCombat(victim, 'death', now)
   Object.assign(victim, {
@@ -113,6 +118,9 @@ function killModel(game, victim, { actor, isTarget, killerName }, now) {
   if (isNpc || isTarget) {
     if (actor) actor.killFlashAt = now
     queueParkSound(game, victim.area, 'kill')
+    const attacker = { name: killerName, color: killerColor }
+    if (isNpc) addCombatFeed(game, 'npc-kill', attacker, now)
+    else addCombatFeed(game, 'target-kill', attacker, now, victim)
   }
   if (actor && isNpc) {
     adjustProfile(actor, -20)
@@ -122,13 +130,14 @@ function killModel(game, victim, { actor, isTarget, killerName }, now) {
     if (game.modeId === 'last_man_standing') addCombatFeedback(actor, 'target-killed', 'Target\nKilled', now)
     else if (game.modeId === 'Hitman') {
       const award = profileKillAward(actor.profile)
+      actor.kills++
       actor.score += award.points
       addCombatFeedback(actor, 'rating', award.rating, now, { points: award.points })
     }
   }
   queueNpcPanic(game, victim, victim.combat.endsAt)
-  resolveParkWinner(game, now)
-  if (!isNpc && !game.winner) {
+  resolveLastManStanding(game, now)
+  if (!isNpc && !game.result) {
     for (const hunter of game.players.values()) {
       if (isLiving(hunter) && game.targets.get(hunter.id) === victim.id) startTargetSearch(game, hunter, now, victim.id)
     }
@@ -142,7 +151,7 @@ function fireProjectile(game, actor, victim, isTarget, now) {
   const startedAt = now + (throwingRock ? rockWindupMs : blowgunWindupMs)
   actor.facing = Math.sign(victim.x - actor.x) || actor.facing
   game.projectiles.push({
-    itemId, area: actor.area, attackerId: actor.id, killerName: actor.name, isTarget,
+    itemId, area: actor.area, attackerId: actor.id, killerName: actor.name, killerColor: actor.color, isTarget,
     victimId: victim.id, generation: victim.generation ?? 0,
     from: { x: actor.x, y: actor.y, facing: actor.facing }, to: { x: victim.x, y: victim.y },
     startedAt, hitAt: startedAt + (throwingRock ? rockFlightMs : blowgunFlightMs),
@@ -154,6 +163,7 @@ function fireProjectile(game, actor, victim, isTarget, now) {
 
 function recordPlayerStun(game, actor, victim, now, defensive) {
   addCombatFeedback(actor, 'stun', 'Stunned', now)
+  if (defensive) addCombatFeed(game, 'killer-stun', actor, now, victim)
   adjustProfile(actor, -10)
   if (defensive && game.modeId === 'Hitman') {
     const hasAlternative = [...game.players.values()].some((other) => isLiving(other) && other !== victim && other !== actor)
@@ -179,7 +189,6 @@ function stunWithRock(game, shot, victim) {
 }
 
 function advanceProjectiles(game, now) {
-  if (game.winner) game.projectiles.length = 0
   game.projectiles = game.projectiles.filter((shot) => {
     const keepUntil = shot.hitAt + (shot.itemId === blowgunItem ? blowgunTraceFadeMs : 0)
     if (shot.resolved) return now < keepUntil
@@ -192,7 +201,7 @@ function advanceProjectiles(game, now) {
       else if (targetInArea && !victim.poison) {
         const approach = Math.sign(shot.from.x - shot.to.x)
         const pose = approach === victim.facing ? 'face-hit' : 'head-hit'
-        victim.poison = { attackerId: shot.attackerId, killerName: shot.killerName, isTarget: shot.isTarget,
+        victim.poison = { attackerId: shot.attackerId, killerName: shot.killerName, killerColor: shot.killerColor, isTarget: shot.isTarget,
           hitAt: shot.hitAt, endsAt: shot.hitAt + poisonMs, impact: { pose, facing: victim.facing } }
       }
     }
@@ -203,11 +212,11 @@ function advanceProjectiles(game, now) {
   const expired = actors.filter((actor) => actor.poison?.endsAt <= now && isLiving(actor))
     .sort((first, second) => first.poison.endsAt - second.poison.endsAt)
   for (const victim of expired) {
-    if (game.winner) break
-    const { attackerId, isTarget, killerName, endsAt } = victim.poison
+    if (game.result) break
+    const { attackerId, isTarget, killerName, killerColor, endsAt } = victim.poison
     const actor = game.players.get(attackerId)
     if (isTarget || game.npcs.has(victim.id)) {
-      killModel(game, victim, { actor, isTarget, killerName }, endsAt)
+      killModel(game, victim, { actor, isTarget, killerName, killerColor }, endsAt)
       if (isTarget && !victim.isBot) queueParkSound(game, victim.area, 'blowgun-death', victim.id)
     } else {
       victim.poison = null
@@ -215,14 +224,11 @@ function advanceProjectiles(game, now) {
       if (actor) addCombatFeedback(actor, 'not-the-target', 'Not the Target', endsAt, { subject: victim })
     }
   }
-  if (game.winner) {
-    for (const actor of actors) if (actor.poison) actor.poison = null
-  }
 }
 
 export function equipParkItem(game, playerId, itemId) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.winner) {
+  if (!isLiving(actor) || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.result) {
     return 'You cannot equip an item right now.'
   }
   if (typeof itemId !== 'string' || !Object.hasOwn(inventory, itemId)) return 'That item is unavailable.'
@@ -231,8 +237,8 @@ export function equipParkItem(game, playerId, itemId) {
 
 export function attackInPark(game, playerId, actorId, now, itemId) {
   const actor = game.players.get(playerId)
-  if (!actor || actor.isBot || !isLiving(actor)) return 'You cannot attack right now.'
-  if (game.winner) return 'The match has ended.'
+  if (!isLiving(actor)) return 'You cannot attack right now.'
+  if (game.result) return 'The match has ended.'
   if (actor.penaltyUntil > now) return 'Items are disabled during a penalty.'
   if (actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode)) return 'Wait for your current action to finish.'
   if (itemId !== undefined && itemId !== actor.equippedItem) return 'Equip that item first.'
@@ -262,7 +268,7 @@ export function attackInPark(game, playerId, actorId, now, itemId) {
   actor.facing = Math.sign(victim.x - actor.x) || actor.facing
   beginCombat(actor, lethal ? 'kill' : 'punch', now)
   if (lethal) {
-    killModel(game, victim, { actor, isTarget, killerName: actor.name }, now)
+    killModel(game, victim, { actor, isTarget, killerName: actor.name, killerColor: actor.color }, now)
   } else {
     victim.facing = -actor.facing
     beginCombat(victim, 'pre-stun', now, { stun: defensiveStun })
@@ -288,7 +294,11 @@ function respawn(game, actor, now) {
 }
 
 export function advanceParkCombat(game, now) {
-  advanceProjectiles(game, now)
+  if (!game.result) {
+    const timeExpired = game.modeId === 'Hitman' && now >= game.matchEndsAt
+    advanceProjectiles(game, timeExpired ? game.matchEndsAt : now)
+    if (timeExpired) finishHitmanMatch(game)
+  }
   const respawned = []
   for (const actor of [...game.players.values(), ...game.npcs.values()]) {
     const waitingToSpectate = actor.respawnAt === null
@@ -299,7 +309,7 @@ export function advanceParkCombat(game, now) {
       actor.combat = null
       actor.pose = 'idle'
     }
-    if (actor.life === 'respawning' && now >= actor.respawnAt) {
+    if (!game.result && actor.life === 'respawning' && now >= actor.respawnAt) {
       respawn(game, actor, now)
       respawned.push(actor)
     }
@@ -314,7 +324,7 @@ export function advanceParkCombat(game, now) {
     }
     finishCombat(actor)
   }
-  resolveParkWinner(game, now)
+  resolveLastManStanding(game, now)
   refreshParkTargets(game, now)
   // A respawn starts with one bar, even when it receives a fresh target.
   for (const actor of respawned) actor.profile = profileBarSize

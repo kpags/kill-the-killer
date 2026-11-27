@@ -73,7 +73,7 @@ function takeNextTrack(playlist) {
 
 export function useGameAudio(settings, menuActive, park) {
   const parkArea = computed(() => menuActive.value ? null : park.value?.area)
-  const winnerVisible = computed(() => !menuActive.value && Boolean(park.value?.winner))
+  const winnerVisible = computed(() => !menuActive.value && Boolean(park.value?.result))
   const inSmoke = computed(() => !menuActive.value && Boolean(park.value?.smokeObscured))
   const ambienceSilenced = computed(() => winnerVisible.value || Boolean(park.value?.penaltyUntil || park.value?.crowdReacting))
   const click = new Audio(clickUrl)

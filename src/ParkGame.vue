@@ -37,6 +37,37 @@ const directions = [
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const inventorySlots = Object.entries(inventory)
 const inventoryHotkeys = new Map(inventorySlots.map(([item], index) => [`Digit${index + 1}`, item]))
+const controlGroups = [
+  { title: 'Movement', bindings: [
+    ...directions.map(({ key, label }) => [key.slice(3), label]),
+    ['Left Shift', 'Sprint while moving'],
+  ] },
+  { title: 'Actions and combat', bindings: [
+    ['E', 'Interact, hide, or leave an activity'],
+    ['F', 'Open or close the Actions wheel'],
+    ['Mouse move', 'Aim at a model or highlight an inventory item'],
+    ['Left click', 'Use the equipped item or select a slot in the inventory bar'],
+    ['Hold right click', 'Open the Inventory wheel. Release to equip the highlighted item.'],
+    ...inventorySlots.map(([, item], index) => [String(index + 1), `Equip ${item.name}`]),
+  ] },
+  { title: 'Menus and activities', bindings: [
+    ['P', 'Open Pause'],
+    ['Hold Tab', 'Show the scoreboard'],
+    ['← / →', 'Watch the previous or next area while spectating'],
+    ['Esc', 'Close a dialog or go back in the pause menu'],
+    ['Click and drag', 'Flick the ball in Basketball Shooting'],
+    ['Left click', 'Lock each aim axis in the Firing Range'],
+  ] },
+]
+const playerNameColors = {
+  blue: '#0169fd', green: '#20fb63', orange: '#fd6e00', purple: '#9800fd', red: '#fd0000', yellow: '#fddb00',
+}
+const hitmanColumns = [
+  { key: 'score', label: 'Score' },
+  { key: 'kills', label: 'Kills' },
+  { key: 'deaths', label: 'Deaths' },
+  { key: 'penalties', label: 'Penalties' },
+]
 const inventoryImages = import.meta.glob('../assets/images/inventory/**/*.png', { eager: true, import: 'default', query: '?url' })
 const equippedItem = computed(() => props.state?.equippedItem ?? 'fist')
 const currentAttackRange = computed(() => equippedAttackRange(equippedItem.value, props.state?.area))
@@ -71,17 +102,29 @@ const pauseError = ref('')
 const gameplayNotice = ref(null)
 const pauseScreen = ref(null)
 const pauseDialog = ref(null)
-const playerListOpen = ref(false)
+const controlsHeading = ref(null)
+const playerListOpen = ref(null)
+const scoreboardButton = ref(null)
+const scoreboardCloseButton = ref(null)
 const actionsOpen = ref(false)
 const inventoryOpen = ref(false)
 const hoveredInventoryItem = ref(null)
 const actionsDialog = ref(null)
 const resumeButton = ref(null)
 const settingsButton = ref(null)
+const controlsButton = ref(null)
 const settingsPanel = ref(null)
 const exiting = ref(false)
 const focusPanel = ref(null)
 const area = computed(() => areas[props.state?.area])
+const matchClock = computed(() => {
+  const state = props.state
+  if (!state || !Number.isFinite(state.matchEndsAt) || state.matchEnded) return null
+  const seconds = Math.max(0, Math.ceil((state.matchEndsAt - state.serverTime) / 1000))
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+})
+const winners = computed(() => props.state?.result?.winners ?? [])
+const singleWinner = computed(() => winners.value.length === 1 ? winners.value[0] : null)
 const stamina = computed(() => props.state?.stamina ?? 100)
 const profile = computed(() => props.state?.profile ?? profileBarSize)
 const profileFills = computed(() => Array.from({ length: profileBars }, (_, index) => profileFill(profile.value, index)))
@@ -100,11 +143,11 @@ const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
 const playingActivity = computed(() => Boolean(props.state?.basketball || props.state?.firingRange))
 const alive = computed(() => props.state?.life === 'alive')
 const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.life))
-const canAct = computed(() => alive.value && !props.state?.matchEnded && !playingActivity.value
+const canAct = computed(() => alive.value && !props.state?.matchEnded && !playingActivity.value && playerListOpen.value !== 'touch'
   && !['combat', 'consume'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
-  if (props.state?.winner || props.state?.victimCue?.kind === 'killed') return null
+  if (props.state?.result || props.state?.victimCue?.kind === 'killed') return null
   if (props.state?.respawnMs) return `Respawning in ${Math.ceil(props.state.respawnMs / 1000)}s`
   if (props.state?.spectating) return 'Spectating'
   if (props.state && !alive.value) return 'You were eliminated.'
@@ -165,7 +208,7 @@ function release() {
 }
 
 function clearHeldControls() {
-  playerListOpen.value = false
+  playerListOpen.value = null
   closeInventory()
   release()
 }
@@ -227,7 +270,7 @@ function toggleActions() {
 function openInventory(event) {
   if (event.button !== 2 || pauseScreen.value || actionsOpen.value || props.reconnecting || !canAct.value || !artReady.value) return
   event.preventDefault()
-  playerListOpen.value = false
+  playerListOpen.value = null
   inventoryOpen.value = true
   release()
 }
@@ -328,11 +371,16 @@ async function attack(event) {
   }
 }
 
-async function spectate(event) {
+function selectSpectatorArea(event) {
   const field = event.currentTarget
   const nextArea = Number(field.value)
   field.value = String(props.state.area)
-  if (activeCommand || pauseScreen.value || props.reconnecting) return
+  watchArea(nextArea)
+}
+
+async function watchArea(nextArea) {
+  if (!props.state?.spectating || props.state.result || !areas[nextArea] || nextArea === props.state.area
+    || activeCommand || pauseScreen.value || props.reconnecting) return
   activeCommand = true
   try {
     await props.command('spectate_area', { area: nextArea })
@@ -343,18 +391,47 @@ async function spectate(event) {
   }
 }
 
+async function toggleTouchScoreboard() {
+  if (playerListOpen.value === 'touch') {
+    playerListOpen.value = null
+    await nextTick()
+    scoreboardButton.value?.focus({ preventScroll: true })
+    return
+  }
+  if (!props.state || props.state.matchEnded || props.reconnecting || pauseScreen.value
+    || actionsOpen.value || inventoryOpen.value || playingActivity.value) return
+  clearHeldControls()
+  playerListOpen.value = 'touch'
+  await nextTick()
+  scoreboardCloseButton.value?.focus({ preventScroll: true })
+}
+
 function keyDown(event) {
-  if (props.state?.winner || playingActivity.value) return
+  if (props.state?.result || playingActivity.value) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
     return
   }
+  if (playerListOpen.value === 'touch') {
+    if (event.code === 'Escape') {
+      event.preventDefault()
+      toggleTouchScoreboard()
+    }
+    return
+  }
   if (pauseScreen.value || inventoryOpen.value) return
+  if (props.state?.spectating && !actionsOpen.value && !playerListOpen.value
+    && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    && (event.code === 'ArrowLeft' || event.code === 'ArrowRight')) {
+    event.preventDefault()
+    if (!event.repeat) watchArea(props.state.area + (event.code === 'ArrowLeft' ? -1 : 1))
+    return
+  }
   if (event.code === 'Tab' && !actionsOpen.value && props.state && !props.reconnecting
     && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
-    if (!event.repeat) playerListOpen.value = true
+    if (!event.repeat) playerListOpen.value = 'hold'
     return
   }
   if (event.code === 'KeyF') {
@@ -382,7 +459,7 @@ function keyDown(event) {
 
 function keyUp(event) {
   if (event.code === 'Tab') {
-    playerListOpen.value = false
+    if (playerListOpen.value === 'hold') playerListOpen.value = null
     return
   }
   if (!pressed.delete(event.code)) return
@@ -428,16 +505,16 @@ watch(canAct, (value) => {
   closeInventory()
 })
 watch(canMove, (value) => { if (!value) releaseMovement() })
-watch(() => props.state?.matchEnded, (value) => { if (value) release() })
-watch(() => Boolean(props.state?.winner), (showWinner) => {
+watch(() => props.state?.matchEnded, (value) => { if (value) clearHeldControls() })
+watch(() => Boolean(props.state?.result), (showWinner) => {
   if (!showWinner) return
   if (pauseDialog.value?.open) pauseDialog.value.close()
   pauseScreen.value = null
-  playerListOpen.value = false
+  playerListOpen.value = null
 })
 
 async function openPause() {
-  if (pauseScreen.value || props.state?.winner) return
+  if (pauseScreen.value || props.state?.result) return
   closeActions()
   pauseScreen.value = 'pause'
   pauseError.value = ''
@@ -461,14 +538,21 @@ async function openPauseSettings() {
   settingsPanel.value?.focusHeading()
 }
 
+async function openPauseControls() {
+  pauseScreen.value = 'controls'
+  await nextTick()
+  controlsHeading.value?.focus({ preventScroll: true })
+}
+
 async function backToPause() {
+  const trigger = pauseScreen.value === 'controls' ? controlsButton : settingsButton
   pauseScreen.value = 'pause'
   await nextTick()
-  settingsButton.value?.focus()
+  trigger.value?.focus()
 }
 
 function cancelPause() {
-  if (pauseScreen.value === 'settings') backToPause()
+  if (pauseScreen.value === 'settings' || pauseScreen.value === 'controls') backToPause()
   else resume()
 }
 
@@ -625,6 +709,8 @@ function readState() {
     stamina: stamina.value,
     profile: profile.value,
     score: props.state?.score,
+    matchClock: matchClock.value,
+    overtimeRound: props.state?.overtimeRound,
     playerList: playerListOpen.value ? props.state?.playerList ?? [] : null,
     combatFeedback: props.state?.combatFeedback,
     crowdReacting: props.state?.crowdReacting ?? false,
@@ -641,7 +727,7 @@ function readState() {
     life: props.state?.life,
     spectating: props.state?.spectating,
     respawnMs: props.state?.respawnMs,
-    winner: props.state?.winner,
+    result: props.state?.result,
     hoveredActorId,
     modelScale: area.value?.modelScale,
     pause: pauseScreen.value,
@@ -687,7 +773,13 @@ defineExpose({ readState })
         <span class="park-profile-label"><span id="park-profile-label">Profile Meter</span><span>{{ profileLabel }}</span></span>
         <span v-if="state?.score != null">Score {{ state.score }}</span>
       </div>
-      <h1>{{ area?.name ?? 'Park' }}</h1>
+      <div class="park-area-heading">
+        <h1>{{ area?.name ?? 'Park' }}</h1>
+        <div v-if="matchClock" class="park-match-clock" role="timer">
+          <span v-if="state.overtimeRound" class="park-overtime">Overtime {{ state.overtimeRound }}</span>
+          <span>{{ matchClock }}</span>
+        </div>
+      </div>
       <div class="park-stamina">
         <span id="park-stamina-label">Stamina</span>
         <div id="park-stamina" class="park-stamina-track" role="meter" aria-labelledby="park-stamina-label"
@@ -696,7 +788,7 @@ defineExpose({ readState })
         </div>
       </div>
       <button type="button" class="glass-button park-button park-hud-pause" aria-keyshortcuts="P"
-        :disabled="Boolean(state?.winner)" @click="openPause">Pause</button>
+        :disabled="Boolean(state?.result)" @click="openPause">Pause</button>
       <section class="park-target" aria-label="Target">
         <div class="park-target-text">
           <span v-if="target">Kill</span>
@@ -731,6 +823,16 @@ defineExpose({ readState })
           <li v-for="notice in state.penaltyNotices" :key="notice.id">{{ notice.name }} at {{ areas[notice.area].name }}</li>
         </ul>
       </aside>
+      <aside class="park-combat-feed" aria-label="Combat feed">
+        <ul role="log">
+          <li v-for="entry in state?.combatFeed" :key="entry.id">
+            <span :style="{ color: playerNameColors[entry.actor.color] }">{{ entry.actor.name }}</span>
+            {{ entry.kind === 'killer-stun' ? ' stunned ' : ' killed ' }}
+            <span v-if="entry.target" :style="{ color: playerNameColors[entry.target.color] }">{{ entry.target.name }}</span>
+            <span v-else>an NPC</span>
+          </li>
+        </ul>
+      </aside>
       <p v-if="loadError || reconnecting || !state || !artReady" class="park-notice" role="status">
         {{ loadError || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
       </p>
@@ -758,8 +860,8 @@ defineExpose({ readState })
       <section v-if="lifecycleNotice" class="park-lifecycle" aria-label="Match status">
         <strong role="status">{{ lifecycleNotice }}</strong>
         <label v-if="state.spectating" for="spectator-area">Watch area</label>
-        <select v-if="state.spectating" id="spectator-area" :value="state.area"
-          :disabled="reconnecting || Boolean(pauseScreen)" @change="spectate">
+        <select v-if="state.spectating" id="spectator-area" :value="state.area" aria-keyshortcuts="ArrowLeft ArrowRight"
+          :disabled="reconnecting || Boolean(pauseScreen)" @change="selectSpectatorArea">
           <option v-for="(place, index) in areas" :key="place.id" :value="index">{{ place.name }}</option>
         </select>
         <span v-if="state.spectating && gameplayNotice" role="status">{{ gameplayNotice.text }}</span>
@@ -768,11 +870,15 @@ defineExpose({ readState })
 
     <footer class="park-controls">
       <ol class="park-inventory-bar" aria-label="Inventory slots">
-        <li v-for="[key, item] in inventorySlots" :key="key" class="park-inventory-slot"
-          :aria-current="key === equippedItem ? 'true' : undefined" :title="item.name">
-          <img :src="inventoryImages[`../${item.display_image}`]" :alt="item.name" draggable="false" />
-          <span v-if="cooldownSweeps[key] < 360" class="park-inventory-cooldown"
-            :style="{ '--cooldown-sweep': `${cooldownSweeps[key]}deg` }" role="img" aria-label="Recharging"></span>
+        <li v-for="[key, item] in inventorySlots" :key="key">
+          <button type="button" class="park-inventory-slot" :aria-pressed="key === equippedItem"
+            :aria-label="`Equip ${item.name}`" :title="item.name"
+            :disabled="!canAct || !artReady || reconnecting || Boolean(pauseScreen) || actionsOpen || inventoryOpen"
+            @click="equipItem(key)">
+            <img :src="inventoryImages[`../${item.display_image}`]" alt="" draggable="false" />
+            <span v-if="cooldownSweeps[key] < 360" class="park-inventory-cooldown"
+              :style="{ '--cooldown-sweep': `${cooldownSweeps[key]}deg` }" role="img" aria-label="Recharging"></span>
+          </button>
         </li>
       </ol>
 
@@ -793,15 +899,20 @@ defineExpose({ readState })
           >{{ arrow }}</button>
         </div>
         <div class="park-touch-actions">
-          <button
-            type="button"
-            class="glass-button park-button"
-            :disabled="!canMove || reconnecting"
-            @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
-            @pointerup="releaseTouch"
-            @pointercancel="releaseTouch"
-            @lostpointercapture="releaseTouch"
-          >Sprint</button>
+          <div class="park-touch-sprint">
+            <button
+              type="button"
+              class="glass-button park-button"
+              :disabled="!canMove || reconnecting"
+              @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
+              @pointerup="releaseTouch"
+              @pointercancel="releaseTouch"
+              @lostpointercapture="releaseTouch"
+            >Sprint</button>
+            <button ref="scoreboardButton" type="button" class="glass-button park-button" aria-haspopup="dialog"
+              :aria-expanded="playerListOpen === 'touch'" :disabled="!state || state.matchEnded || reconnecting"
+              @click="toggleTouchScoreboard">Scoreboard</button>
+          </div>
           <button type="button" class="glass-button park-button" :disabled="!prompt || reconnecting" @click="interact">
             Interact
           </button>
@@ -848,36 +959,64 @@ defineExpose({ readState })
       </dialog>
     </div>
 
-    <dialog v-if="playerListOpen" open class="park-player-list" aria-labelledby="park-player-list-title">
-      <h2 id="park-player-list-title">Players</h2>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">{{ state.score == null ? 'Status' : 'Score' }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(player, index) in state.playerList" :key="index" :class="{ eliminated: player.eliminated }">
-            <th scope="row">{{ player.name }}</th>
-            <td>{{ player.score ?? (player.eliminated ? 'Eliminated' : 'Alive') }}</td>
-          </tr>
-        </tbody>
-      </table>
+    <dialog v-if="playerListOpen" open class="park-player-list"
+      :class="{ 'park-player-list-touch': playerListOpen === 'touch', 'park-player-list-hitman': state.score != null }"
+      aria-labelledby="park-player-list-title">
+      <h2 id="park-player-list-title">Scoreboard</h2>
+      <div class="park-scoreboard-table">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <template v-if="state.score != null">
+                <th v-for="{ key, label } in hitmanColumns" :key="key" scope="col">{{ label }}</th>
+              </template>
+              <th v-else scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(player, index) in state.playerList" :key="index" :class="{ eliminated: player.eliminated }">
+              <th scope="row">{{ player.name }}</th>
+              <template v-if="state.score != null">
+                <td v-for="{ key } in hitmanColumns" :key="key">{{ player[key] }}</td>
+              </template>
+              <td v-else>{{ player.eliminated ? 'Eliminated' : 'Alive' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <button v-if="playerListOpen === 'touch'" ref="scoreboardCloseButton" type="button"
+        class="glass-button park-button park-scoreboard-close" @click="toggleTouchScoreboard">Close</button>
     </dialog>
 
     <BasketballGame v-if="state?.basketball && !pauseScreen" :round="state.basketball" :shoot="shootBasketball"
       :reconnecting="reconnecting" @close="interact" />
     <FiringRangeGame v-if="state?.firingRange && !pauseScreen" :round="state.firingRange" :server-time="state.serverTime"
       :lock-aim="lockFiringRange" :reconnecting="reconnecting" @close="interact" />
-    <dialog ref="pauseDialog" class="park-pause-dialog" :aria-label="pauseScreen === 'settings' ? 'Settings' : 'Pause menu'"
+    <dialog ref="pauseDialog" class="park-pause-dialog" :class="{ 'park-controls-dialog': pauseScreen === 'controls' }"
+      :aria-label="pauseScreen === 'settings' ? 'Settings' : pauseScreen === 'controls' ? 'Controls' : 'Pause menu'"
       @cancel.prevent="cancelPause">
       <AudioSettings v-if="pauseScreen === 'settings'" ref="settingsPanel" v-model="audioSettings" @back="backToPause" />
+      <section v-else-if="pauseScreen === 'controls'" class="park-pause-menu park-controls-panel">
+        <h2 ref="controlsHeading" tabindex="-1">Controls</h2>
+        <div v-for="group in controlGroups" :key="group.title">
+          <h3>{{ group.title }}</h3>
+          <dl>
+            <div v-for="[input, action] in group.bindings" :key="action">
+              <dt><kbd>{{ input }}</kbd></dt>
+              <dd>{{ action }}</dd>
+            </div>
+          </dl>
+        </div>
+        <button type="button" class="glass-button park-button" @click="backToPause">Back</button>
+      </section>
       <section v-else class="park-pause-menu">
         <h2>Paused</h2>
         <button ref="resumeButton" type="button" class="glass-button park-button" :disabled="exiting" @click="resume">Resume</button>
         <button ref="settingsButton" type="button" class="glass-button park-button" :disabled="exiting"
           @click="openPauseSettings">Settings</button>
+        <button ref="controlsButton" type="button" class="glass-button park-button park-controls-button"
+          :disabled="exiting" @click="openPauseControls">Controls</button>
         <button type="button" class="glass-button park-button" :disabled="exiting || reconnecting" @click="exitGame">Exit</button>
         <p v-if="pauseError || reconnecting" class="park-pause-status" role="status">{{ pauseError || 'Reconnecting…' }}</p>
       </section>
@@ -888,15 +1027,27 @@ defineExpose({ readState })
       class="park-kill-flash" :style="{ '--flash-duration': `${killFlashMs}ms` }" aria-hidden="true"></div>
     <div v-if="poisonEdgeVisible" class="park-poison-edge" aria-hidden="true"></div>
     <div v-if="blackout || state?.respawnedAt != null" ref="respawnCurtain" class="park-blackout" aria-hidden="true"></div>
-    <div v-if="state?.victimCue" :key="state.victimCue.startedAt" ref="victimCueElement"
+    <div v-if="state?.victimCue && !state.result" :key="state.victimCue.startedAt" ref="victimCueElement"
       class="park-victim-cue" :style="{ backgroundImage: `url(${victimCueArt[state.victimCue.kind]})` }">
       <span class="park-feedback-status" role="status">{{ state.victimCue.kind === 'killed' ? 'Killed' : 'Stunned' }}</span>
       <p v-if="killerCredit" class="park-killer-credit">
         {{ killerCredit }}<span aria-hidden="true">{{ killerCredit }}</span>
       </p>
     </div>
-    <div v-if="state?.winner" class="park-winner" role="status">
-      <p>Winner:<br />{{ state.winner.name }}</p>
+    <div v-if="state?.result" class="park-winner" role="status">
+      <div class="park-victory">
+        <p class="park-victory-title">{{ singleWinner ? 'Winner:' : 'Winners:' }}</p>
+        <p v-if="singleWinner" class="park-victory-name">{{ singleWinner.name }}</p>
+        <ul v-else class="park-victory-names">
+          <li v-for="winner in winners" :key="winner.id">{{ winner.name }}</li>
+        </ul>
+        <dl v-if="singleWinner?.score != null" class="park-victory-stats">
+          <div v-for="{ key, label } in hitmanColumns" :key="key">
+            <dt>{{ label }}</dt>
+            <dd>{{ singleWinner[key] }}</dd>
+          </div>
+        </dl>
+      </div>
     </div>
   </main>
 </template>
@@ -923,12 +1074,28 @@ defineExpose({ readState })
   border-bottom: 1px solid #ffdfba40;
 }
 
-.park-hud h1 {
+.park-area-heading {
   grid-area: area;
+}
+
+.park-area-heading h1 {
   margin: 0;
   font-size: clamp(1.1rem, 3vw, 1.65rem);
   line-height: 1.1;
 }
+
+.park-match-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.4em;
+  margin-top: 3px;
+  font-size: clamp(0.75rem, 2vw, 1rem);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.park-overtime { color: #ffdb81; }
 
 .park-stamina {
   grid-area: stamina;
@@ -1139,9 +1306,10 @@ defineExpose({ readState })
   border-radius: 12px;
   background: #312b39;
   overflow: hidden;
+  touch-action: manipulation;
 }
 
-.park-inventory-slot[aria-current="true"] {
+.park-inventory-slot[aria-pressed="true"] {
   outline: 4px solid #ffda42;
   outline-offset: -4px;
 }
@@ -1167,7 +1335,7 @@ defineExpose({ readState })
 }
 
 .park-penalized > :not(.park-stage, .park-victim-cue, .park-winner, .park-poison-edge, .park-heartbeat-edge),
-.park-penalized .park-stage > :not(canvas, .park-penalty-status),
+.park-penalized .park-stage > :not(canvas, .park-penalty-status, .park-combat-feed),
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
 }
@@ -1272,6 +1440,32 @@ defineExpose({ readState })
   overflow-wrap: anywhere;
 }
 
+.park-combat-feed {
+  position: absolute;
+  bottom: 12px;
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 1;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+  color: #fff;
+  font-size: clamp(0.8125rem, 1.7vw, 1rem);
+  font-weight: 800;
+  line-height: 1.25;
+  -webkit-text-stroke: 3px #000;
+  paint-order: stroke fill;
+  overflow-wrap: anywhere;
+}
+
+.park-combat-feed ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.park-stage:has(.park-lifecycle) .park-combat-feed { bottom: 90px; }
+
 .park-lifecycle {
   position: absolute;
   bottom: 12px;
@@ -1356,8 +1550,15 @@ defineExpose({ readState })
   text-align: center;
 }
 
-.park-winner p {
+.park-victory {
   max-width: 100%;
+}
+
+.park-victory :is(p, ul, dl, dd) { margin: 0; }
+
+.park-victory-title,
+.park-victory-name,
+.park-victory-names {
   margin: 0;
   font-size: clamp(2.75rem, 10vmin, 7rem);
   font-weight: 900;
@@ -1366,6 +1567,31 @@ defineExpose({ readState })
   -webkit-text-stroke: clamp(5px, 1.3vmin, 12px) #000;
   paint-order: stroke fill;
 }
+
+.park-victory-names {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.18em 0.6em;
+  max-width: 45rem;
+  padding: 0;
+  list-style: none;
+  font-size: clamp(1.5rem, 6vmin, 4rem);
+}
+
+.park-victory-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  padding-top: 12px;
+  font-size: clamp(0.875rem, 3vmin, 1.125rem);
+  font-weight: 800;
+  -webkit-text-stroke: 3px #000;
+  paint-order: stroke fill;
+}
+
+.park-victory-stats dd { font-size: 1.2em; }
 
 .park-killer-credit {
   position: absolute;
@@ -1656,6 +1882,11 @@ defineExpose({ readState })
   font-size: 1.25rem;
 }
 
+.park-player-list-hitman { width: min(calc(100% - 20px), 30rem); }
+.park-player-list-touch { pointer-events: auto; }
+.park-scoreboard-table { overflow-x: auto; }
+.park-scoreboard-close { margin-top: 10px; }
+
 .park-player-list table {
   width: 100%;
   border-collapse: collapse;
@@ -1680,7 +1911,7 @@ defineExpose({ readState })
   color: #b5aeb7;
 }
 
-.park-player-list :is(th, td):last-child {
+.park-player-list :is(th, td):not(:first-child) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1713,6 +1944,39 @@ defineExpose({ readState })
   margin: 0 0 4px;
 }
 
+.park-controls-dialog { width: min(calc(100% - 28px), 29rem); }
+
+.park-controls-panel h3 {
+  margin: 0 0 5px;
+  font-size: 0.94rem;
+}
+
+.park-controls-panel dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.park-controls-panel dl > div {
+  display: grid;
+  grid-template-columns: minmax(6.75rem, 0.8fr) 2fr;
+  align-items: start;
+  gap: 8px;
+}
+
+.park-controls-panel kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid #ffdfba65;
+  border-radius: 5px;
+  background: #251e25ee;
+  font: inherit;
+  font-weight: 700;
+}
+
+.park-controls-panel dd { margin: 0; }
+
 .park-pause-status {
   margin: 0;
   font-size: 0.875rem;
@@ -1723,6 +1987,8 @@ defineExpose({ readState })
 }
 
 @media (any-pointer: coarse) {
+  .park-controls-button { display: none; }
+
   .park-inventory-bar { padding-bottom: 0; }
 
   .park-touch {
@@ -1750,6 +2016,11 @@ defineExpose({ readState })
     display: flex;
     flex-wrap: wrap;
     justify-content: end;
+    gap: 5px;
+  }
+
+  .park-touch-sprint {
+    display: grid;
     gap: 5px;
   }
 

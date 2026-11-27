@@ -193,19 +193,17 @@ test('both modes randomly spawn humans and bots in distinct playable areas', () 
         if (count === 6) {
           assert.deepEqual(actors.map(({ color }) => color).sort(), [...colors].sort())
           const bot = actors.at(-1)
-          const { area, x, y } = bot
           setParkInput(bot, { x: 1, y: 0, sprint: true }, 1)
-          stepPark(game, 50, 51)
-          assert.equal(bot.pose, 'idle')
-          assert.deepEqual([bot.area, bot.x, bot.y], [area, x, y])
+          assert.equal(bot.input.x, 0)
+          assert.equal(bot.input.sprint, false)
         }
       }
     }
   }
 })
 
-test('movement follows area edges in order and leaves stationary bots behind', () => {
-  const game = createEmptyPark(roster(3))
+test('movement follows area edges in order and leaves idle players behind', () => {
+  const game = createEmptyPark(roster(3).map((player) => ({ ...player, isBot: false })))
   const player = game.players.get('0')
   for (let area = 0; area < areas.length; area++) {
     const current = areas[area]

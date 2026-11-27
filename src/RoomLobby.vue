@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
-import { capacity, compareMaps, mapName, normalizePlayerName } from '../shared/lobbyRules.js'
+import { capacity, compareMaps, mapName, normalizePlayerName, roomStartError } from '../shared/lobbyRules.js'
 import gameModes from '../data/game_modes.json'
 
 const props = defineProps({
@@ -34,6 +34,7 @@ const isHost = computed(() => props.room.hostId === props.playerId)
 const selectedMode = computed(() => modes.find(({ id }) => id === props.room.selectedModeId))
 const selectedMap = computed(() => maps.find(({ id }) => id === props.room.selectedMapId))
 const playerCount = computed(() => props.room.slots.filter(Boolean).length)
+const startError = computed(() => roomStartError(props.room.slots))
 
 function canEdit(player) {
   return player.id === props.playerId || (isHost.value && player.isBot)
@@ -186,7 +187,8 @@ defineExpose({ focusHeading, readState })
             <p class="player-count" aria-live="polite">{{ playerCount }} / {{ capacity }} players</p>
             <div class="room-actions">
               <button v-if="isHost" class="glass-button room-button start-button" type="button"
-                :disabled="reconnecting || !selectedMap" @click="run(() => command('start'))">Start</button>
+                :disabled="reconnecting || !selectedMap || Boolean(startError)"
+                :title="startError || undefined" @click="run(() => command('start'))">Start</button>
               <button class="glass-button room-button" type="button" :disabled="reconnecting" @click="run(leave)">Leave</button>
             </div>
           </div>

@@ -6,9 +6,11 @@ import { animationDuration, blowgunItem, combatFeedbackDuration, isLiving, killF
   respawnFadeMs, rockItem, stunMs, victimCueEndsAt } from '../shared/combat.js'
 import { smokeFadeMs } from '../shared/smoke.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
-import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
+import { advanceParkCombat, attackInPark, equipParkItem, refreshParkTargets } from './parkCombat.js'
+import { botDecisionMs, chooseBotIntent, createBotMemory, observeParkBot, steerParkBot } from './parkBots.js'
+import { compareHitmanPlayers, hitmanStats, parkMatchMs } from './parkMatch.js'
 import { penaltySoundsFor } from './parkSounds.js'
-import { smokeObscuredUntil } from './parkSmoke.js'
+import { smokeObscuredUntil, useSmokeInPark } from './parkSmoke.js'
 import { isBasketballSpot, simulateBasketballShot } from '../shared/basketball.js'
 import { isFiringRangeSpot, rangeAttempts, rangeCoordinate, rangePoints, rangeResultMs, rangeShotDelayMs } from '../shared/firingRange.js'
 
@@ -19,7 +21,7 @@ const stopped = { x: 0, y: 0, sprint: false, until: 0 }
 const parkActions = ['phone', 'talk', 'dance', 'scream']
 const actionVariants = ['one', 'two', 'three']
 
-export function createParkSession(players, random = Math.random, modeId = 'last_man_standing') {
+export function createParkSession(players, random = Math.random, modeId = 'last_man_standing', startedAt = 0) {
   const palette = [...colors]
   const spawnAreas = areas.map((_, index) => index)
   const roster = new Map(players.map((player) => {
@@ -47,6 +49,9 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
       profile: profileBarSize,
       profileHideMs: 0,
       score: 0,
+      kills: 0,
+      deaths: 0,
+      penalties: 0,
       recoveryMs: 0,
       exhausted: false,
       input: stopped,
@@ -62,12 +67,14 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
   const game = {
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
+    combatFeed: new Map(), combatFeedSequence: 0,
     soundEvents: new Map(),
     projectiles: [],
     smokeClouds: [],
     basketballRecords: new Map(),
     firingRangeRecords: new Map(),
-    initialPlayerCount: players.length, winner: null, winnerAt: null,
+    initialPlayerCount: players.length, result: null, resultAt: null,
+    matchEndsAt: startedAt + parkMatchMs, overtimeRound: 0,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
   refreshParkTargets(game, 0, true)
@@ -76,7 +83,11 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
 }
 
 export function setParkInput(actor, input, now) {
-  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume') return
+  if (!actor?.isBot) applyParkInput(actor, input, now)
+}
+
+function applyParkInput(actor, input, now) {
+  if (!isLiving(actor) || actor.combat || actor.mode === 'consume') return
   if (![-1, 0, 1].includes(input.x) || ![-1, 0, 1].includes(input.y) || typeof input.sprint !== 'boolean') return
   actor.input = { x: input.x, y: input.y, sprint: input.sprint, until: now + 300 }
   if (!input.sprint) actor.exhausted = false
@@ -147,7 +158,7 @@ function awardBasketballShot(game, actor, now) {
 
 export function shootBasketballInPark(game, playerId, launch, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.mode !== 'basketball' || game.winner
+  if (!isLiving(actor) || actor.isBot || actor.mode !== 'basketball' || game.result
     || activityObscured(game, actor, now)) {
     return 'Open Basketball Shooting to take a shot.'
   }
@@ -172,7 +183,7 @@ function awardFiringRangeShot(game, actor, now) {
 
 export function lockFiringRangeInPark(game, playerId, now, aimedAt = now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.mode !== 'firing-range' || game.winner || activityObscured(game, actor, now)) {
+  if (!isLiving(actor) || actor.isBot || actor.mode !== 'firing-range' || game.result || activityObscured(game, actor, now)) {
     return 'Open the Firing Range to take a shot.'
   }
   const round = actor.firingRange
@@ -196,7 +207,7 @@ export function lockFiringRangeInPark(game, playerId, now, aimedAt = now) {
 
 export function playParkAction(game, playerId, action, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.winner) {
+  if (!isLiving(actor) || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.result) {
     return 'You cannot perform an action right now.'
   }
   if (!parkActions.includes(action)) return 'That action is unavailable.'
@@ -210,8 +221,8 @@ export function playParkAction(game, playerId, action, now) {
 
 export function interactInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
-  if (!actor || actor.isBot) return
-  if (!isLiving(actor) || actor.combat || actor.mode === 'consume' || game.winner) return 'You cannot interact right now.'
+  if (!actor) return
+  if (!isLiving(actor) || actor.combat || actor.mode === 'consume' || game.result) return 'You cannot interact right now.'
   if (actor.mode === 'action') endInteraction(actor)
   else if (actor.mode !== 'free') {
     if (actor.mode === 'basketball') awardBasketballShot(game, actor, now)
@@ -296,11 +307,54 @@ function move(actor, dx, dy) {
   return moved
 }
 
+function stepParkBots(game, elapsedMs, now, respawned) {
+  for (const actor of game.players.values()) {
+    if (!actor.isBot) continue
+    if (!isLiving(actor) || respawned.has(actor.id)) {
+      actor.botMemory = undefined
+      continue
+    }
+    if (game.result) return
+    const memory = actor.botMemory ??= createBotMemory(now, game.random)
+    if (actor.combat || actor.mode === 'consume') {
+      memory.attack = null
+      memory.intent = null
+      continue
+    }
+    const changedArea = memory.observedArea != null && actor.area !== memory.observedArea
+    if (now >= memory.nextDecisionAt || changedArea || memory.attack?.at <= now) {
+      const observation = observeParkBot(game, actor, now, {
+        heartbeat: heartbeatInterval(game, actor),
+        smokeObscured: smokeObscuredUntil(actor, game.smokeClouds, now) > now,
+        penaltyNotices: penaltyNoticesFor(game, actor, now),
+      })
+      memory.intent = chooseBotIntent(observation, memory, now, game.random)
+      memory.nextDecisionAt = now + botDecisionMs
+      const intent = memory.intent
+      if (intent.kind === 'interact') interactInPark(game, actor.id, now)
+      if (intent.kind === 'action') playParkAction(game, actor.id, intent.action, now)
+      if (intent.kind === 'attack' || intent.kind === 'smoke') {
+        if (actor.equippedItem === intent.item || !equipParkItem(game, actor.id, intent.item)) {
+          if (intent.kind === 'attack') attackInPark(game, actor.id, intent.id, now, intent.item)
+          else useSmokeInPark(game, actor.id, now)
+        }
+      }
+    }
+    if (memory.intent?.kind === 'move') {
+      if (actor.mode === 'sit' || actor.mode === 'hide') interactInPark(game, actor.id, now)
+      applyParkInput(actor, steerParkBot(actor, memory.intent, elapsedMs), now)
+    } else {
+      stopParkInput(actor)
+    }
+  }
+}
+
 export function stepPark(game, elapsedMs, now) {
   if (game.smokeClouds.length) game.smokeClouds = game.smokeClouds.filter(({ endsAt }) => endsAt > now)
   const respawned = advanceParkCombat(game, now)
+  stepParkBots(game, elapsedMs, now, respawned)
   for (const actor of game.players.values()) {
-    if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
+    if (!isLiving(actor) || game.result || respawned.has(actor.id)) continue
     if (actor.mode === 'basketball' || actor.mode === 'firing-range') {
       if (activityObscured(game, actor, now)) {
         endInteraction(actor)
@@ -365,7 +419,7 @@ export function stepPark(game, elapsedMs, now) {
 }
 
 function heartbeatInterval(game, actor) {
-  if (!isLiving(actor) || game.winner) return
+  if (!isLiving(actor) || game.result) return
   let distance = Infinity
   for (const hunter of game.players.values()) {
     if (hunter.area === actor.area && isLiving(hunter) && game.targets.get(hunter.id) === actor.id) {
@@ -373,6 +427,15 @@ function heartbeatInterval(game, actor) {
     }
   }
   if (Number.isFinite(distance)) return Math.round(500 + 1050 * Math.min(1, distance / areas[actor.area].width))
+}
+
+function penaltyNoticesFor(game, actor, now) {
+  if (actor.penaltyUntil > now) return []
+  return game.penaltyNotices.flatMap(({ id, playerId, expiresAt }) => {
+    const penalized = game.players.get(playerId)
+    if (!penalized || expiresAt <= now) return []
+    return [{ id, name: penalized.name, area: penalized.area, expiresAt }]
+  })
 }
 
 export function parkView(game, playerId, now) {
@@ -388,11 +451,7 @@ export function parkView(game, playerId, now) {
   const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
   const { consumption } = actor
   const penaltyUntil = actor.penaltyUntil > now ? actor.penaltyUntil : undefined
-  const penaltyNotices = penaltyUntil ? [] : game.penaltyNotices.flatMap(({ id, playerId, expiresAt }) => {
-    const penalized = game.players.get(playerId)
-    if (!penalized || expiresAt <= now) return []
-    return [{ id, name: penalized.name, area: penalized.area, expiresAt }]
-  })
+  const penaltyNotices = penaltyNoticesFor(game, actor, now)
   const actors = [...game.players.values(), ...game.npcs.values()]
     .filter((other) => other.area === area
       && (!smokeOpaque || other === actor)
@@ -421,21 +480,25 @@ export function parkView(game, playerId, now) {
     penaltySounds: penaltySoundsFor(game, playerId, now),
     penaltyFadeAt: !penaltyUntil && actor.penaltyUntil + penaltyFadeMs > now ? actor.penaltyUntil : undefined,
     penaltyNotices,
+    combatFeed: [...game.combatFeed.values()].flat().filter(({ expiresAt }) => expiresAt > now)
+      .sort((first, second) => first.id - second.id),
     killFlashAt: actor.killFlashAt != null && now - actor.killFlashAt < killFlashMs ? actor.killFlashAt : undefined,
     life: actor.life,
     spectating,
     respawnMs: actor.respawnAt ? Math.ceil(Math.max(0, actor.respawnAt - now)) : 0,
     respawnedAt: actor.life === 'alive' && actor.respawnedAt + respawnFadeMs > now ? actor.respawnedAt : undefined,
-    matchEnded: Boolean(game.winner),
-    winner: game.winner && now >= game.winnerAt ? game.winner : null,
+    matchEnded: Boolean(game.result),
+    result: game.result && now >= game.resultAt ? game.result : null,
+    matchEndsAt: game.matchEndsAt,
+    overtimeRound: game.overtimeRound,
     stamina: Math.round(actor.stamina * 10) / 10,
     profile: actor.profile,
     score: hitman ? actor.score : undefined,
-    playerList: [...game.players.values()].map((player) => hitman
-      ? { name: player.name, score: player.score }
-      : { name: player.name, eliminated: !isLiving(player) }),
+    playerList: hitman
+      ? [...game.players.values()].sort(compareHitmanPlayers).map((player) => ({ name: player.name, ...hitmanStats(player) }))
+      : [...game.players.values()].map((player) => ({ name: player.name, eliminated: !isLiving(player) })),
     victimCue: actor.victimCue && now < victimCueEndsAt(actor.victimCue) ? actor.victimCue : undefined,
-    consumption: consumption && isLiving(actor) && !game.winner && now - consumption.startedAt < gameplayFeedbackMs
+    consumption: consumption && isLiving(actor) && !game.result && now - consumption.startedAt < gameplayFeedbackMs
       ? consumption : undefined,
     combatFeedback: actors.includes(actor) ? actor.combatFeedback
       ?.filter(({ area: eventArea, kind, startedAt, actorId }) => eventArea === area
@@ -443,17 +506,17 @@ export function parkView(game, playerId, now) {
       .map(({ area, ...feedback }) => feedback) : undefined,
     target: target ? { name: target.name, color: target.color } : null,
     targetReadyAt: actor.targetReadyAt,
-    basketball: actor.mode === 'basketball' && !game.winner ? {
+    basketball: actor.mode === 'basketball' && !game.result ? {
       score: actor.basketball.score,
       ballInFlight: actor.basketball.readyAt > now,
       record: game.basketballRecords.get(activityKey(actor)) ?? { name: 'Nobody', score: 0 },
     } : undefined,
-    firingRange: actor.mode === 'firing-range' && !game.winner ? {
+    firingRange: actor.mode === 'firing-range' && !game.result ? {
       ...actor.firingRange,
       record: game.firingRangeRecords.get(activityKey(actor)) ?? { name: 'Nobody', score: 0 },
     } : undefined,
     mode: actor.mode,
-    spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
+    spotId: isLiving(actor) && !actor.combat && !game.result ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),
     actors: actors.map(({ id, color, area: actorArea, x, y, facing, pose, mode, animationOffset, actionStartedAt,
       life, combat, vanishesAt, generation, poison, rockStunnedUntil, penaltyUntil: modelPenaltyUntil }) => ({

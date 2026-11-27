@@ -1,11 +1,11 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { WebSocket, WebSocketServer } from 'ws'
-import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from '../shared/lobbyRules.js'
+import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName, roomStartError } from '../shared/lobbyRules.js'
 import { winnerDisplayMs } from '../shared/combat.js'
 import { createParkSession, interactInPark, lockFiringRangeInPark, parkView, playParkAction, setParkInput,
   shootBasketballInPark, stepPark, stopParkInput } from './parkSession.js'
-import { attackInPark, equipParkItem, spectateInPark } from './parkCombat.js'
+import { advanceParkCombat, attackInPark, equipParkItem, spectateInPark } from './parkCombat.js'
 import { useSmokeInPark } from './parkSmoke.js'
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -72,8 +72,13 @@ export function createLobbyServer({
     for (const player of room.slots) send(player?.socket, message)
   }
 
+  function updateMatchDeadline(game, now) {
+    if (game && !game.result && now >= game.matchEndsAt) advanceParkCombat(game, now)
+  }
+
   function broadcastPark(room, now = performance.now()) {
-    if (room.game.winner && now >= room.game.winnerAt) {
+    updateMatchDeadline(room.game, now)
+    if (room.game.result && now >= room.game.resultAt) {
       room.game.returnHomeAt ??= now + winnerDisplayMs
       if (now >= room.game.returnHomeAt) {
         closeRoom(room)
@@ -111,6 +116,7 @@ export function createLobbyServer({
 
   function removePlayer(player) {
     const room = player.room
+    updateMatchDeadline(room.game, performance.now())
     if (player.id === room.hostId) {
       closeRoom(room, 'The host left the room.', player)
     } else {
@@ -205,6 +211,10 @@ export function createLobbyServer({
     }
     if (room.game) {
       const now = performance.now()
+      updateMatchDeadline(room.game, now)
+      if (room.game.modeId === 'Hitman' && room.game.result && type !== 'spectate_area') {
+        return reject('The match has ended.')
+      }
       let interactionError
       if (type === 'interact') interactionError = interactInPark(room.game, player.id, now)
       else if (type === 'basketball_shot') interactionError = shootBasketballInPark(room.game, player.id, message.launch, now)
@@ -221,13 +231,16 @@ export function createLobbyServer({
     }
 
     switch (type) {
-      case 'start':
+      case 'start': {
         if (!isHost) return reject('Only the host can start.')
         if (room.selectedMapId !== 'park') return reject('This map is unavailable for gameplay.')
-        room.game = createGame(room.slots.filter(Boolean), Math.random, room.selectedModeId)
+        const startError = roomStartError(snapshot(room).slots)
+        if (startError) return reject(startError)
+        room.game = createGame(room.slots.filter(Boolean), Math.random, room.selectedModeId, performance.now())
         broadcast(room)
         broadcastPark(room)
         return result()
+      }
       case 'select_mode':
         if (!isHost) return reject('Only the host can select a mode.')
         if (!modeIds.includes(message.modeId)) return reject('That mode is unavailable.')
@@ -276,8 +289,11 @@ export function createLobbyServer({
       let message
       try { message = JSON.parse(raw.toString()) } catch { return }
       if (message?.type === 'game_input') {
-        const actor = socket.player?.room.game?.players.get(socket.player.id)
-        setParkInput(actor, message, performance.now())
+        const game = socket.player?.room.game
+        const now = performance.now()
+        if (game && !game.result && (game.modeId !== 'Hitman' || now < game.matchEndsAt)) {
+          setParkInput(game.players.get(socket.player.id), message, now)
+        }
         return
       }
       if (message && Number.isSafeInteger(message.requestId)) handle(socket, message)

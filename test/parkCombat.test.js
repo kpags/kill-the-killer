@@ -7,6 +7,7 @@ import { profileFill } from '../shared/profile.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark } from '../server/parkSession.js'
 import { advanceParkCombat, attackInPark, equipParkItem, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
 import { useSmokeInPark } from '../server/parkSmoke.js'
+import { parkMatchMs } from '../server/parkMatch.js'
 import { smokeCooldownMs, smokeDurationMs, smokeHeight, smokeItem, smokeWidth } from '../shared/smoke.js'
 
 const deathDuration = 450 / 1.3
@@ -62,11 +63,18 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
     assert.deepEqual(parkView(game, shooter.id, hitAt + 100).blowgunTraces, [])
     advanceParkCombat(game, hitAt + poisonMs - 1)
     assert.equal(victim.life, 'alive')
+    assert.deepEqual(parkView(game, remote.id, hitAt + poisonMs - 1).combatFeed, [])
     advanceParkCombat(game, hitAt + poisonMs)
     assert.equal(victim.life, 'dying')
     assert.equal(victim.poison, null)
     assert.equal(victim.victimCue.killerName, shooter.name)
     assert.equal(victim.combat.startedAt, hitAt + poisonMs)
+    assert.deepEqual(parkView(game, remote.id, hitAt + poisonMs).combatFeed, [{
+      id: 1, kind: 'target-kill',
+      actor: { name: shooter.name, color: shooter.color },
+      target: { name: victim.name, color: victim.color },
+      expiresAt: hitAt + poisonMs + 10_000,
+    }])
     assert.deepEqual(game.soundEvents.get(0).map(({ kind, listenerId }) => ({ kind, listenerId })), [
       { kind: 'kill', listenerId: undefined }, { kind: 'blowgun-death', listenerId: victim.id },
     ])
@@ -74,6 +82,40 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
     assert.match(attackInPark(game, shooter.id, other.id, blowgunCooldownMs - 1, blowgunItem), /recharging/)
     assert.equal(attackInPark(game, shooter.id, other.id, blowgunCooldownMs, blowgunItem), undefined)
   }
+})
+
+test('the room-wide combat feed keeps and expires three FIFO entries per action', () => {
+  const game = emptyGame('Hitman', 6)
+  const [attacker, ...others] = game.players.values()
+  const [observer, ...victims] = others
+  observer.area = 2
+  for (const [index, victim] of victims.entries()) {
+    const now = index * 500
+    advanceParkCombat(game, now)
+    game.targets.set(attacker.id, observer.id)
+    game.targets.set(victim.id, attacker.id)
+    assert.equal(attackInPark(game, attacker.id, victim.id, now), undefined)
+  }
+  for (const [index, victim] of victims.entries()) {
+    const now = 2500 + index * 500
+    advanceParkCombat(game, now)
+    game.targets.set(attacker.id, victim.id)
+    assert.equal(attackInPark(game, attacker.id, victim.id, now), undefined)
+  }
+  advanceParkCombat(game, 4500)
+  game.npcs.set('npc', { id: 'npc', area: 0, x: 205, y: 290, color: 'red', pose: 'idle' })
+  assert.equal(attackInPark(game, attacker.id, 'npc', 4500), undefined)
+  const feed = parkView(game, observer.id, 4500).combatFeed
+  assert.deepEqual(feed.map(({ id, kind }) => [id, kind]), [
+    [2, 'killer-stun'], [3, 'killer-stun'], [4, 'killer-stun'],
+    [6, 'target-kill'], [7, 'target-kill'], [8, 'target-kill'], [9, 'npc-kill'],
+  ])
+  assert.deepEqual(feed.filter(({ kind }) => kind === 'killer-stun').map(({ target }) => target.name),
+    victims.slice(1).map(({ name }) => name))
+  assert.deepEqual(feed.at(-1).actor, { name: attacker.name, color: attacker.color })
+  assert.equal(feed.at(-1).target, undefined)
+  assert.deepEqual(parkView(game, observer.id, 10500).combatFeed.map(({ id }) => id), [3, 4, 6, 7, 8, 9])
+  assert.deepEqual(parkView(game, observer.id, 14500).combatFeed, [])
 })
 
 test('non-target players recover from blowgun poison and only they and the shooter receive feedback', () => {
@@ -190,7 +232,7 @@ test('the earlier poison deadline decides the final elimination when both expire
   assert.equal(attackInPark(game, second.id, first.id, 10, blowgunItem), undefined)
   const bothExpired = blowgunWindupMs + blowgunFlightMs + poisonMs + 10
   advanceParkCombat(game, bothExpired)
-  assert.equal(game.winner.id, first.id)
+  assert.equal(game.result.winners[0].id, first.id)
   assert.equal(second.life, 'dying')
   assert.equal(first.poison, null)
 })
@@ -222,7 +264,7 @@ test('Rock targets within 100 map pixels and starts a three-second stun on impac
   assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['rock-used', 'rock-hit', 'full-stun'])
   assert.deepEqual(victim.combat, { startedAt: hitAt, endsAt })
   assert.equal(victim.life, 'alive')
-  assert.equal(game.winner, null)
+  assert.equal(game.result, null)
   assert.deepEqual(view(hitAt).rockThrows, [])
   setParkInput(victim, { x: 1, y: 0, sprint: true }, endsAt - 50)
   stepPark(game, 50, endsAt - 1)
@@ -357,7 +399,11 @@ test('the player list shares match scores or eliminations across areas without a
     assert.equal(attackInPark(game, '0', '1', 10), undefined)
 
     const expected = mode === 'Hitman'
-      ? [{ name: 'Player 1', score: 100 }, { name: 'Player 2', score: 0 }, { name: 'Player 3', score: 0 }]
+      ? [
+        { name: 'Player 1', score: 100, kills: 1, deaths: 0, penalties: 0 },
+        { name: 'Player 3', score: 0, kills: 0, deaths: 0, penalties: 0 },
+        { name: 'Player 2', score: 0, kills: 0, deaths: 1, penalties: 0 },
+      ]
       : [{ name: 'Player 1', eliminated: false }, { name: 'Player 2', eliminated: true }, { name: 'Player 3', eliminated: false }]
     for (const id of game.players.keys()) assert.deepEqual(parkView(game, id, 10).playerList, expected)
   }
@@ -533,7 +579,7 @@ test('a seated NPC or unassigned player can be killed from a walkable position a
 
 test('a final kill shows the same winner to both players after the death fade and Killed cue', () => {
   const game = emptyGame('last_man_standing', 2)
-  assert.equal(game.winner, null)
+  assert.equal(game.result, null)
   assert.equal(attackInPark(game, '0', '1', 0), undefined)
   assert.equal(game.players.get('0').pose, 'kill')
   const feedback = [{ kind: 'target-killed', text: 'Target\nKilled', startedAt: 0 }]
@@ -549,21 +595,89 @@ test('a final kill shows the same winner to both players after the death fade an
   setParkInput(game.players.get('0'), { x: 1, y: 0, sprint: false }, 501)
   stepPark(game, 50, 551)
   assert.equal(game.players.get('0').x, 200)
-  assert.equal(parkView(game, '0', corpseDuration).winner, null)
+  assert.equal(parkView(game, '0', corpseDuration).result, null)
   assert.deepEqual(parkView(game, '0', 2799).combatFeedback, feedback)
   assert.deepEqual(parkView(game, '0', 2800).combatFeedback, [])
   advanceParkCombat(game, 3299)
-  assert.equal(parkView(game, '0', 3299).winner, null)
+  assert.equal(parkView(game, '0', 3299).result, null)
   assert.deepEqual(parkView(game, '1', 3299).victimCue, cue)
   assert.equal(parkView(game, '1', 3299).spectating, false)
   assert.match(spectateInPark(game, '1', 1), /not spectating/)
   advanceParkCombat(game, 3300)
   assert.equal(parkView(game, '1', 3300).victimCue, undefined)
   assert.equal(parkView(game, '1', 3300).spectating, true)
-  const expectedWinner = { id: '0', name: 'Player 1', color: game.players.get('0').color }
-  assert.deepEqual(parkView(game, '0', 3300).winner, expectedWinner)
-  assert.deepEqual(parkView(game, '1', 3300).winner, expectedWinner)
-  assert.equal(emptyGame('last_man_standing', 1).winner, null)
+  const expectedResult = { winners: [{ id: '0', name: 'Player 1', color: game.players.get('0').color }] }
+  assert.deepEqual(parkView(game, '0', 3300).result, expectedResult)
+  assert.deepEqual(parkView(game, '1', 3300).result, expectedResult)
+  assert.equal(emptyGame('last_man_standing', 1).result, null)
+})
+
+test('Hitman ranks by score, then deaths, then penalties, and keeps all complete ties', () => {
+  const scenarios = [
+    { stats: [[200, 4, 3], [100, 0, 0], [100, 0, 0]], winners: ['0'] },
+    { stats: [[200, 4, 0], [200, 3, 2], [100, 0, 0]], winners: ['1'] },
+    { stats: [[200, 3, 3], [200, 3, 2], [200, 4, 0]], winners: ['1'] },
+    { stats: [[200, 3, 2], [200, 3, 2], [200, 3, 2]], winners: ['0', '1', '2'] },
+  ]
+  for (const { stats, winners } of scenarios) {
+    const game = emptyGame('Hitman', stats.length)
+    for (const [index, [score, deaths, penalties]] of stats.entries()) {
+      Object.assign(game.players.get(String(index)), { score, deaths, penalties, kills: index + 1 })
+    }
+    advanceParkCombat(game, parkMatchMs - 1)
+    assert.equal(parkView(game, '0', parkMatchMs - 1).result, null)
+    advanceParkCombat(game, parkMatchMs)
+    const result = parkView(game, '0', parkMatchMs).result
+    assert.deepEqual(result.winners.map(({ id }) => id), winners)
+    for (const winner of result.winners) {
+      const counter = game.players.get(winner.id)
+      assert.equal(winner.kills, counter.kills)
+      assert.equal(winner.deaths, counter.deaths)
+      assert.equal(winner.penalties, counter.penalties)
+      assert.equal(winner.score, counter.score)
+    }
+    advanceParkCombat(game, parkMatchMs + 100)
+    assert.deepEqual(parkView(game, '2', parkMatchMs + 100).result, result)
+  }
+})
+
+test('Hitman counts actual poison deaths by the buzzer and discards later deaths', () => {
+  for (const offset of [-1, 0, 1]) {
+    const game = emptyGame('Hitman', 2)
+    const [shooter, victim] = game.players.values()
+    const firedAt = parkMatchMs - (blowgunWindupMs + blowgunFlightMs + poisonMs) + offset
+    equipParkItem(game, shooter.id, blowgunItem)
+    assert.equal(attackInPark(game, shooter.id, victim.id, firedAt), undefined)
+    // The simulation can cross the deadline between ticks.
+    advanceParkCombat(game, parkMatchMs + 25)
+    assert.equal(shooter.kills, offset <= 0 ? 1 : 0)
+    assert.equal(victim.deaths, offset <= 0 ? 1 : 0)
+    assert.equal(game.result.winners.length, offset <= 0 ? 1 : 2)
+    assert.equal(game.resultAt, parkMatchMs)
+    assert.equal(game.projectiles.length, 0)
+    assert.equal(victim.poison, null)
+    advanceParkCombat(game, parkMatchMs + 10_000)
+    assert.equal(victim.life, offset <= 0 ? 'respawning' : 'alive')
+  }
+})
+
+test('Last Man Standing adds consecutive overtime rounds and finishes on the last elimination', () => {
+  const game = emptyGame('last_man_standing', 2)
+  advanceParkCombat(game, parkMatchMs - 1)
+  assert.equal(game.overtimeRound, 0)
+  for (const round of [1, 2, 3]) {
+    const now = parkMatchMs + (round - 1) * 60_000
+    advanceParkCombat(game, now)
+    const view = parkView(game, '0', now)
+    assert.equal(view.overtimeRound, round)
+    assert.equal(view.matchEndsAt, now + 60_000)
+    assert.equal(view.matchEnded, false)
+  }
+  const now = parkMatchMs + 2 * 60_000 + 100
+  assert.equal(attackInPark(game, '0', '1', now), undefined)
+  assert.equal(parkView(game, '0', now).matchEnded, true)
+  assert.equal(parkView(game, '0', now).result, null)
+  assert.equal(parkView(game, '0', game.resultAt).result.winners[0].id, '0')
 })
 
 test('killer stuns last three seconds after pre-stun and reassign only in Hitman', () => {
@@ -798,6 +912,9 @@ test('an NPC penalty survives Hitman death and respawn with the same deadline', 
   const respawned = parkView(game, '0', 5500)
   assert.equal(respawned.life, 'alive')
   assert.equal(respawned.respawnedAt, 5500)
+  const stats = respawned.playerList.find(({ name }) => name === game.players.get('0').name)
+  assert.equal(stats.deaths, 1)
+  assert.equal(stats.penalties, 1)
   assert.equal(parkView(game, '0', 5999).respawnedAt, 5500)
   assert.equal(parkView(game, '0', 6000).respawnedAt, undefined)
   assert.equal(parkView(game, '1', 5500).respawnedAt, undefined)
@@ -892,7 +1009,7 @@ test('Hitman respawns five seconds after a kill in a random green-boundary posit
     const game = emptyGame('Hitman')
     const victim = game.players.get('1')
     attackInPark(game, '0', '1', 1000)
-    assert.equal(game.winner, null)
+    assert.equal(game.result, null)
     assert.equal(parkView(game, '1', 1000).respawnMs, 5000)
     advanceParkCombat(game, 3450)
     assert.equal(victim.life, 'respawning')
@@ -994,8 +1111,8 @@ test('target assignments recover after departures, and solo play does not end au
   const last = emptyGame('last_man_standing', 2)
   last.players.delete('1')
   advanceParkCombat(last, 0)
-  assert.equal(last.winner.id, '0')
+  assert.equal(last.result.winners[0].id, '0')
   const solo = emptyGame('last_man_standing', 1)
   advanceParkCombat(solo, 0)
-  assert.equal(solo.winner, null)
+  assert.equal(solo.result, null)
 })

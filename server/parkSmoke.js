@@ -2,11 +2,11 @@ import { isLiving } from '../shared/combat.js'
 import { smokeCooldownMs, smokeDurationMs, smokeHeight, smokeItem, smokeWidth } from '../shared/smoke.js'
 import { queueParkSound } from './parkSounds.js'
 
-export function smokeObscuredUntil(actor, clouds, now) {
+export function smokeObscuredUntil(actor, clouds, now, viewerId = actor?.id) {
   if (!isLiving(actor)) return 0
   let until = 0
   for (const cloud of clouds) {
-    if (cloud.area !== actor.area || cloud.ownerId === actor.id || cloud.endsAt <= now) continue
+    if (cloud.area !== actor.area || cloud.ownerId === viewerId || cloud.endsAt <= now) continue
     if (Math.hypot((actor.x - cloud.x) / (smokeWidth / 2), (actor.y - cloud.y) / (smokeHeight / 2)) <= 1) {
       until = Math.max(until, cloud.endsAt)
     }
@@ -16,7 +16,7 @@ export function smokeObscuredUntil(actor, clouds, now) {
 
 export function useSmokeInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.winner) {
+  if (!isLiving(actor) || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.result) {
     return 'You cannot use Smoke right now.'
   }
   if (actor.penaltyUntil > now) return 'Items are disabled during a penalty.'
