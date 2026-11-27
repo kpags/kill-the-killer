@@ -9,6 +9,7 @@ import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 import { penaltySoundsFor } from './parkSounds.js'
 import { smokeObscuredUntil } from './parkSmoke.js'
+import { isBasketballSpot, simulateBasketballShot } from '../shared/basketball.js'
 
 const staminaLimit = 100
 const profileRange = 36
@@ -63,6 +64,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
     soundEvents: new Map(),
     projectiles: [],
     smokeClouds: [],
+    basketballRecords: new Map(),
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
@@ -116,11 +118,46 @@ function endInteraction(actor) {
   actor.seatSlot = null
   actor.hideUntil = 0
   actor.actionStartedAt = null
+  actor.basketball = null
+}
+
+function basketballKey(actor) {
+  return `${actor.area}:${actor.spotId}`
+}
+
+function basketballBlocked(game, actor, now) {
+  return actor.poison?.endsAt > now || smokeObscuredUntil(actor, game.smokeClouds, now) > now
+}
+
+function awardBasketballShot(game, actor, now) {
+  const round = actor.basketball
+  if (!round.pending || round.pending.at > now) return
+  round.score += round.pending.points
+  round.pending = null
+  const key = basketballKey(actor)
+  if (round.score > (game.basketballRecords.get(key)?.score ?? 0)) {
+    game.basketballRecords.set(key, { name: actor.name, score: round.score })
+  }
+}
+
+export function shootBasketballInPark(game, playerId, launch, now) {
+  const actor = game.players.get(playerId)
+  if (!isLiving(actor) || actor.isBot || actor.mode !== 'basketball' || game.winner
+    || basketballBlocked(game, actor, now)) {
+    return 'Open Basketball Shooting to take a shot.'
+  }
+  const round = actor.basketball
+  if (round.readyAt > now) return 'Wait for the ball to return.'
+  const shot = simulateBasketballShot(launch)
+  if (!shot) return 'That shot is unavailable.'
+  awardBasketballShot(game, actor, now)
+  round.readyAt = now + shot.duration
+  if (shot.points) round.pending = { points: shot.points, at: now + shot.scoreAt }
 }
 
 export function playParkAction(game, playerId, action, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume' || game.winner) {
+  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball'].includes(actor.mode) || game.winner) {
     return 'You cannot perform an action right now.'
   }
   if (!parkActions.includes(action)) return 'That action is unavailable.'
@@ -138,12 +175,15 @@ export function interactInPark(game, playerId, now) {
   if (!isLiving(actor) || actor.combat || actor.mode === 'consume' || game.winner) return 'You cannot interact right now.'
   if (actor.mode === 'action') endInteraction(actor)
   else if (actor.mode !== 'free') {
+    if (actor.mode === 'basketball') awardBasketballShot(game, actor, now)
     endInteraction(actor)
     return
   }
 
   const spot = nearbySpot(actor)
   if (!spot) return
+  const basketball = isBasketballSpot(spot)
+  if (basketball && basketballBlocked(game, actor, now)) return 'Wait for the effect to clear before playing basketball.'
   if (spot.consumptionPose) {
     stopParkInput(actor)
     actor.spotId = spot.id
@@ -151,6 +191,7 @@ export function interactInPark(game, playerId, now) {
     actor.pose = spot.consumptionPose
     actor.actionStartedAt = now
     actor.consumption = { item: spot.consumable ?? spot.name, startedAt: now }
+    actor.stamina = Math.min(staminaLimit, actor.stamina + 10)
     return
   }
   const isSeat = spot.type.main === 'sitting'
@@ -171,6 +212,10 @@ export function interactInPark(game, playerId, now) {
   } else if (spot.type.sub === 'music') {
     actor.mode = 'dance'
     actor.pose = 'dance'
+  } else if (basketball) {
+    actor.mode = 'basketball'
+    actor.pose = 'idle'
+    actor.basketball = { score: 0, readyAt: 0, pending: null }
   } else {
     actor.mode = 'inspect'
     actor.pose = 'idle'
@@ -209,6 +254,12 @@ export function stepPark(game, elapsedMs, now) {
   const respawned = advanceParkCombat(game, now)
   for (const actor of game.players.values()) {
     if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
+    if (actor.mode === 'basketball') {
+      if (basketballBlocked(game, actor, now)) {
+        endInteraction(actor)
+        stopParkInput(actor)
+      } else awardBasketballShot(game, actor, now)
+    }
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
     if (actor.mode === 'consume' && now - actor.actionStartedAt >= animationDuration(actor.color, actor.pose)) {
       endInteraction(actor)
@@ -330,6 +381,11 @@ export function parkView(game, playerId, now) {
       .map(({ area, ...feedback }) => feedback) : undefined,
     target: target ? { name: target.name, color: target.color } : null,
     targetReadyAt: actor.targetReadyAt,
+    basketball: actor.mode === 'basketball' && !game.winner ? {
+      score: actor.basketball.score,
+      ballInFlight: actor.basketball.readyAt > now,
+      record: game.basketballRecords.get(basketballKey(actor)) ?? { name: 'Nobody', score: 0 },
+    } : undefined,
     mode: actor.mode,
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),

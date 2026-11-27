@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, colors, constrain, hidingPose, standingHeight } from '../shared/park.js'
-import { animationDuration } from '../shared/combat.js'
-import { createParkSession, interactInPark, parkView, setParkInput, stepPark } from '../server/parkSession.js'
+import { animationDuration, blowgunFlightMs, blowgunItem, blowgunWindupMs, rockFlightMs, rockItem, rockWindupMs } from '../shared/combat.js'
+import { createParkSession, interactInPark, parkView, setParkInput, shootBasketballInPark, stepPark } from '../server/parkSession.js'
+import { simulateBasketballShot } from '../shared/basketball.js'
+import { attackInPark, equipParkItem } from '../server/parkCombat.js'
+import { useSmokeInPark } from '../server/parkSmoke.js'
+import { smokeItem } from '../shared/smoke.js'
 
 function roster(count = 2) {
   return Array.from({ length: count }, (_, index) => ({ id: String(index), isBot: index > 1 }))
@@ -19,6 +23,81 @@ function createEmptyPark(players) {
   }
   return game
 }
+
+test('the faster basketball shot counts clean makes, rim makes, and misses', () => {
+  const clean = simulateBasketballShot({ x: 240, y: 260, vx: 0, vy: -600 })
+  assert.equal(clean.points, 2)
+  assert.ok(Math.abs(clean.duration * 2.1 - 2175) < 1)
+  assert.equal(simulateBasketballShot({ x: 240, y: 265, vx: 8, vy: -560 }).points, 1)
+  assert.equal(simulateBasketballShot({ x: 240, y: 265, vx: 22, vy: -560 }).points, 0)
+  assert.equal(simulateBasketballShot({ x: 240, y: 290, vx: 0, vy: -170 }).points, 0)
+  assert.equal(simulateBasketballShot({ x: 240, y: 260, vx: 350, vy: -600 }).points, 0)
+  assert.equal(simulateBasketballShot({ x: 240, y: 260, vx: '0', vy: -600 }), null)
+})
+
+test('basketball shares the high score and keeps the record holder until their score is beaten', () => {
+  const game = createEmptyPark([{ id: '0', name: 'Player 1' }, { id: '1', name: 'Player 2' }])
+  const launch = { x: 240, y: 260, vx: 0, vy: -600 }
+  const { scoreAt, duration } = simulateBasketballShot(launch)
+  const record = (id, now) => parkView(game, id, now).basketball.record
+  for (const actor of game.players.values()) Object.assign(actor, { area: 3, x: 110, y: 272 })
+  assert.match(shootBasketballInPark(game, '0', launch, 0), /Open Basketball/)
+  interactInPark(game, '0', 0)
+  interactInPark(game, '1', 0)
+  assert.deepEqual(record('1', 0), { name: 'Nobody', score: 0 })
+  assert.equal(shootBasketballInPark(game, '0', launch, 0), undefined)
+  assert.match(shootBasketballInPark(game, '0', launch, 50), /Wait for the ball/)
+  stepPark(game, 50, scoreAt - 1)
+  assert.deepEqual(record('1', scoreAt - 1), { name: 'Nobody', score: 0 })
+  stepPark(game, 1, scoreAt)
+  assert.deepEqual(record('1', scoreAt), { name: 'Player 1', score: 2 })
+  assert.equal(parkView(game, '1', scoreAt).basketball.score, 0)
+  interactInPark(game, '0', duration)
+  assert.equal(parkView(game, '0', duration).basketball, undefined)
+
+  assert.equal(shootBasketballInPark(game, '1', launch, duration), undefined)
+  stepPark(game, 50, duration + scoreAt)
+  assert.deepEqual(record('1', duration + scoreAt), { name: 'Player 1', score: 2 })
+  assert.equal(shootBasketballInPark(game, '1', launch, duration * 2), undefined)
+  stepPark(game, 50, duration * 2 + scoreAt)
+  interactInPark(game, '0', duration * 3)
+  assert.deepEqual(record('0', duration * 3), { name: 'Player 2', score: 4 })
+  assert.equal(parkView(game, '0', duration * 3).basketball.score, 0)
+})
+
+test('basketball closes on a lethal hit, punch stun, rock stun, poison impact, or smoke exposure', () => {
+  const effects = [
+    { item: 'fist', target: true, pose: 'death', delay: 0 },
+    { item: 'fist', target: false, pose: 'pre-stun', delay: 0 },
+    { item: rockItem, target: true, pose: 'stun', delay: rockWindupMs + rockFlightMs },
+    { item: blowgunItem, target: true, pose: 'idle', delay: blowgunWindupMs + blowgunFlightMs },
+    { item: smokeItem, target: true, pose: 'idle', delay: 50 },
+  ]
+  for (const { item, target, pose, delay } of effects) {
+    const game = createEmptyPark(roster(3))
+    const [attacker, player, other] = game.players.values()
+    game.targetOrder = [attacker.id, ...(target ? [player.id, other.id] : [other.id, player.id])]
+    Object.assign(attacker, { area: 3, x: 100, y: 272 })
+    Object.assign(player, { area: 3, x: 110, y: 272 })
+    const launch = { x: 240, y: 260, vx: 0, vy: -600 }
+    assert.equal(interactInPark(game, player.id, 0), undefined)
+    assert.equal(shootBasketballInPark(game, player.id, launch, 10), undefined)
+    assert.equal(equipParkItem(game, attacker.id, item), undefined)
+    const result = item === smokeItem ? useSmokeInPark(game, attacker.id, 20)
+      : attackInPark(game, attacker.id, player.id, 20, item)
+    assert.equal(result, undefined)
+    const hitAt = 20 + delay
+    stepPark(game, 50, hitAt)
+    assert.equal(player.pose, pose)
+    assert.equal(parkView(game, player.id, hitAt).basketball, undefined)
+    assert.equal(player.basketball, null)
+    assert.match(shootBasketballInPark(game, player.id, launch, hitAt), /Open Basketball/)
+    if (item === smokeItem || item === blowgunItem) {
+      assert.match(interactInPark(game, player.id, hitAt), /Wait for the effect to clear/)
+    }
+    assert.equal(game.basketballRecords.size, 0)
+  }
+})
 
 test('Park shares only the assigned target name and color, even when the target moves or hides', () => {
   const members = roster(3).map((member, index) => ({ ...member, name: `Player ${index + 1}` }))
@@ -228,10 +307,10 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(player.mode, 'sit')
   interactInPark(game, player.id, 2)
   assert.equal(player.pose, 'idle')
-  Object.assign(player, { area: 3, x: 120, y: 274 })
+  Object.assign(player, { area: 3, x: 300, y: 274 })
   interactInPark(game, player.id, 3)
   assert.equal(player.mode, 'inspect')
-  assert.equal(parkView(game, player.id, 3).spotId, 'interact-A')
+  assert.equal(parkView(game, player.id, 3).spotId, 'interact-B')
   interactInPark(game, player.id, 4)
   Object.assign(player, { area: 3, x: 214, y: 275 })
   interactInPark(game, player.id, 5)
@@ -252,7 +331,7 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(parkView(game, '1', 10010).actors.length, 2)
 })
 
-test('food and drinks stores play one shared consumption animation and give private confirmation', () => {
+test('food and drinks restore 10 stamina once per interaction and play shared consumption animations', () => {
   for (const [area, x, y, item, pose] of [
     [0, 426, 278, 'Ice cream', 'consume'],
     [1, 380, 290, 'Cotton Candy', 'consume'],
@@ -262,15 +341,17 @@ test('food and drinks stores play one shared consumption animation and give priv
     const game = createEmptyPark(roster())
     const [player, observer] = game.players.values()
     Object.assign(observer, { area })
-    Object.assign(player, { area, x, y: y + 30 })
+    Object.assign(player, { area, x, y: y + 30, stamina: 65 })
     interactInPark(game, player.id, 1)
     assert.equal(parkView(game, player.id, 1).consumption, undefined)
+    assert.equal(player.stamina, 65)
 
     Object.assign(player, { y, pose: 'phone-one', mode: 'action', actionStartedAt: 1 })
     interactInPark(game, player.id, 2)
     const own = parkView(game, player.id, 2)
     assert.equal(own.mode, 'consume')
     assert.deepEqual(own.consumption, { item, startedAt: 2 })
+    assert.equal(own.stamina, 75)
     const other = parkView(game, observer.id, 2)
     const visible = other.actors.find(({ id }) => id === player.id)
     assert.equal(visible.pose, pose)
@@ -278,6 +359,7 @@ test('food and drinks stores play one shared consumption animation and give priv
     assert.equal(other.consumption, undefined)
 
     assert.match(interactInPark(game, player.id, 3), /cannot interact/)
+    assert.equal(player.stamina, 75)
     setParkInput(player, { x: 1, y: 0, sprint: true }, 4)
     const end = 2 + animationDuration(player.color, pose)
     stepPark(game, 50, end - 1)
@@ -288,6 +370,9 @@ test('food and drinks stores play one shared consumption animation and give priv
     assert.equal(player.x, x)
     assert.equal(parkView(game, player.id, 2001).consumption.startedAt, 2)
     assert.equal(parkView(game, player.id, 2002).consumption, undefined)
+    player.stamina = 95
+    assert.equal(interactInPark(game, player.id, 2002), undefined)
+    assert.equal(parkView(game, player.id, 2002).stamina, 100)
   }
   assert.deepEqual(colors.map((color) => animationDuration(color, 'consume')), Array(colors.length).fill(1350))
   assert.deepEqual(colors.map((color) => animationDuration(color, 'drink')), Array(colors.length).fill(720))

@@ -70,7 +70,7 @@ export function refreshParkTargets(game, now, initial = false) {
 }
 
 function releaseActivity(actor) {
-  Object.assign(actor, { spotId: null, seatSlot: null, hideUntil: 0, actionStartedAt: null, input: stopped })
+  Object.assign(actor, { spotId: null, seatSlot: null, hideUntil: 0, actionStartedAt: null, basketball: null, input: stopped })
 }
 
 function beginCombat(actor, pose, now, extra = {}) {
@@ -210,7 +210,7 @@ function advanceProjectiles(game, now) {
 
 export function equipParkItem(game, playerId, itemId) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume' || game.winner) {
+  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball'].includes(actor.mode) || game.winner) {
     return 'You cannot equip an item right now.'
   }
   if (typeof itemId !== 'string' || !Object.hasOwn(inventory, itemId)) return 'That item is unavailable.'
@@ -221,7 +221,7 @@ export function attackInPark(game, playerId, actorId, now, itemId) {
   const actor = game.players.get(playerId)
   if (!actor || actor.isBot || !isLiving(actor)) return 'You cannot attack right now.'
   if (game.winner) return 'The match has ended.'
-  if (actor.combat || actor.mode === 'consume') return 'Wait for your current action to finish.'
+  if (actor.combat || ['consume', 'basketball'].includes(actor.mode)) return 'Wait for your current action to finish.'
   if (itemId !== undefined && itemId !== actor.equippedItem) return 'Equip that item first.'
   const range = equippedAttackRange(actor.equippedItem, actor.area)
   if (!range) return 'That item cannot attack.'

@@ -15,7 +15,7 @@ export function smokeObscuredUntil(actor, clouds, now) {
 
 export function useSmokeInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || actor.mode === 'consume' || game.winner) {
+  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball'].includes(actor.mode) || game.winner) {
     return 'You cannot use Smoke right now.'
   }
   if (actor.equippedItem !== smokeItem) return 'Equip Smoke first.'

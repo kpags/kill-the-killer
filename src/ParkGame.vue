@@ -7,6 +7,8 @@ import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/
 import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
 import AudioSettings from './AudioSettings.vue'
+import BasketballGame from './BasketballGame.vue'
+import { isBasketballSpot } from '../shared/basketball.js'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
 import inventory from '../data/inventory.json'
 import { smokeItem } from '../shared/smoke.js'
@@ -88,9 +90,10 @@ const targetSprite = computed(() => {
 const spot = computed(() => area.value?.spots.find(({ id }) => id === props.state?.spotId))
 const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
+const playingBasketball = computed(() => Boolean(props.state?.basketball))
 const alive = computed(() => props.state?.life === 'alive')
 const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.life))
-const canAct = computed(() => alive.value && !props.state?.matchEnded && !['combat', 'consume'].includes(props.state?.mode))
+const canAct = computed(() => alive.value && !props.state?.matchEnded && !['combat', 'consume', 'basketball'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
   if (props.state?.winner || props.state?.victimCue?.kind === 'killed') return null
@@ -114,6 +117,7 @@ const prompt = computed(() => {
       if (nearby.consumptionPose === 'consume') return nearby.consumable ? nearby.name : 'Eat'
       if (nearby.type.main === 'sitting') return 'Sit'
       if (nearby.type.sub === 'music') return 'Dance'
+      if (isBasketballSpot(nearby)) return 'Play basketball'
       return 'Inspect'
     }
   }
@@ -167,7 +171,8 @@ function showGameplayNotice(text) {
 }
 
 async function interact() {
-  if (pauseScreen.value || actionsOpen.value || inventoryOpen.value || activeCommand || !prompt.value || props.reconnecting) return
+  if (pauseScreen.value || actionsOpen.value || inventoryOpen.value || activeCommand || props.reconnecting
+    || (!prompt.value && !playingBasketball.value)) return
   activeCommand = true
   release()
   try {
@@ -177,6 +182,10 @@ async function interact() {
   } finally {
     activeCommand = false
   }
+}
+
+function shootBasketball(launch) {
+  return props.command('basketball_shot', { launch })
 }
 
 function closeActions() {
@@ -318,7 +327,7 @@ async function spectate(event) {
 }
 
 function keyDown(event) {
-  if (props.state?.winner) return
+  if (props.state?.winner || playingBasketball.value) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
@@ -383,6 +392,11 @@ watch(inspecting, (value, previous) => {
   if (pauseScreen.value || actionsOpen.value) return
   if (value) focusPanel.value?.focus()
   else if (previous) refocus()
+}, { flush: 'post' })
+
+watch(playingBasketball, (value) => {
+  if (value) clearHeldControls()
+  else refocus()
 }, { flush: 'post' })
 
 watch(() => props.reconnecting, (value) => {
@@ -595,6 +609,7 @@ function readState() {
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
+    basketball: props.state?.basketball,
     hidingMs: props.state?.hidingMs,
     actors: props.state?.actors ?? [],
     fadedForeground,
@@ -797,6 +812,8 @@ defineExpose({ readState })
       </table>
     </dialog>
 
+    <BasketballGame v-if="playingBasketball && !pauseScreen" :round="state.basketball" :shoot="shootBasketball"
+      :reconnecting="reconnecting" @close="interact" />
     <dialog ref="pauseDialog" class="park-pause-dialog" :aria-label="pauseScreen === 'settings' ? 'Settings' : 'Pause menu'"
       @cancel.prevent="cancelPause">
       <AudioSettings v-if="pauseScreen === 'settings'" ref="settingsPanel" v-model="audioSettings" @back="backToPause" />

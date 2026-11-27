@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { WebSocket, WebSocketServer } from 'ws'
 import { capacity, compareMaps, normalizeInviteCode, normalizePlayerName } from '../shared/lobbyRules.js'
 import { winnerDisplayMs } from '../shared/combat.js'
-import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark, stopParkInput } from './parkSession.js'
+import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, shootBasketballInPark, stepPark, stopParkInput } from './parkSession.js'
 import { attackInPark, equipParkItem, spectateInPark } from './parkCombat.js'
 import { useSmokeInPark } from './parkSmoke.js'
 
@@ -204,6 +204,7 @@ export function createLobbyServer({
       const now = performance.now()
       let interactionError
       if (type === 'interact') interactionError = interactInPark(room.game, player.id, now)
+      else if (type === 'basketball_shot') interactionError = shootBasketballInPark(room.game, player.id, message.launch, now)
       else if (type === 'play_action') interactionError = playParkAction(room.game, player.id, message.action, now)
       else if (type === 'attack') interactionError = attackInPark(room.game, player.id, message.actorId, now, message.itemId)
       else if (type === 'equip_item') interactionError = equipParkItem(room.game, player.id, message.itemId)

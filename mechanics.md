@@ -65,6 +65,7 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 - Players sprint at 181.5 map pixels per second and consume 20 stamina points per second. A full meter supports five seconds of continuous sprinting.
 - Players recover 10 stamina points every three seconds, up to the 100-point maximum.
 - Sitting on a seat restores 30 stamina points per second, up to the 100-point maximum.
+- Each successful food or drink store interaction immediately restores 10 stamina points, up to the 100-point maximum.
 - A kill or stun consumes 30 stamina points per action.
 - The blue stamina bar animates as stamina drains and recovers. It updates immediately when reduced motion is enabled.
 
@@ -153,6 +154,14 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Buttons on Home, Home Settings, and Room play hover and click sounds after the first menu interaction. Menu music continuously shuffles the three tracks and follows the Music slider. It pauses in Park and resumes when the player returns to a menu.
 - Playground shuffles and loops its own music through the **Music** slider. Music starts fresh on each visit, continues during the pause menu, and stops when the player leaves Playground. Spectators hear the music of the area they watch.
 
+### Basketball Shooting
+
+- At the basketball stall in Playground, press **E** or tap **Interact** to open the basketball dialog. Hold the ball with the left mouse button, flick toward the hoop, and release. The direction and speed of the flick set the shot's angle and power.
+- The white dialog uses a 93.6-pixel backboard, a 51.7-pixel rim, and a close **×** in the top-right corner.
+- A clean basket scores 2 points. A basket after touching the rim scores 1 point. Both scoring shots trigger a quick confetti burst above the rim. A miss scores 0.
+- Each opening starts a new run. The stall starts with **Nobody: 0** and records the player's name and score when they set a new best in the current match. Other players see that record when they open the same stall.
+- Players remain exposed to their hunters while shooting. A kill, stun, Poisoned Blowgun hit, or Smoke exposure closes the dialog and ends the run. Saved records carry over to later runs in the same match.
+
 ### Park NPCs
 
 - Each blue marker holds a group of up to three crowd NPCs when the session starts. The server shares NPC positions and activities with everyone in the same area.
@@ -190,6 +199,14 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-27 — Added a brief confetti burst above the basketball rim for made shots.
+
+- 2026-11-27 — Added 10-point stamina recovery at food and drink stores. Widened the basketball backboard by 30% and the rim by 10%, and increased shot speed by 50%.
+
+- 2026-11-27 — Redesigned the basketball popup, sped up ball flight, and added automatic closing on combat or utility effects.
+
+- 2026-11-27 — Added Playground basketball with flick controls, rim scoring, and a shared high score.
 
 - 2026-11-27 — Added directional Poisoned Blowgun hit poses and a brief impact spark. Increased player sprint speed by 50%.
 
