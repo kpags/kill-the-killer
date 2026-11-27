@@ -180,11 +180,11 @@ onUnmounted(() => cancelAnimationFrame(frameId))
 </script>
 
 <template>
-  <dialog ref="dialog" class="basketball-dialog" aria-label="Basketball Shooting" @cancel.prevent="emit('close')">
-    <button type="button" class="basketball-close" aria-label="Close" :disabled="reconnecting" @click="emit('close')">
+  <dialog ref="dialog" class="park-activity-dialog basketball-dialog" aria-label="Basketball Shooting" @cancel.prevent="emit('close')">
+    <button type="button" class="park-activity-close" aria-label="Close" :disabled="reconnecting" @click="emit('close')">
       <span aria-hidden="true">×</span>
     </button>
-    <dl class="basketball-scores">
+    <dl class="park-activity-scores">
       <div><dt>Score</dt><dd>{{ round.score }}</dd></div>
       <div><dt>Highest score</dt><dd>{{ round.record.name }}: {{ round.record.score }}</dd></div>
     </dl>
@@ -200,53 +200,11 @@ onUnmounted(() => cancelAnimationFrame(frameId))
       </div>
     </div>
     <p id="basketball-instructions">Hold the ball, flick toward the hoop, and release.</p>
-    <p class="basketball-feedback" role="status">{{ reconnecting ? 'Reconnecting…' : feedback }}</p>
+    <p class="park-activity-feedback" role="status">{{ reconnecting ? 'Reconnecting…' : feedback }}</p>
   </dialog>
 </template>
 
 <style scoped>
-.basketball-dialog {
-  box-sizing: border-box;
-  width: min(32rem, calc(100vw - 40px));
-  max-height: calc(100dvh - 40px);
-  padding: clamp(12px, 3vmin, 20px);
-  overflow: visible;
-  border: 1px solid #e1e4ea;
-  border-radius: 22px;
-  background: #fff;
-  box-shadow: 0 18px 54px #03051299;
-  color: #20252e;
-  color-scheme: light;
-}
-
-.basketball-dialog::backdrop { background: #080e21aa; backdrop-filter: blur(5px); }
-.basketball-close {
-  position: absolute;
-  z-index: 1;
-  top: -14px;
-  right: -14px;
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  padding: 0;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: #27303e;
-  box-shadow: 0 3px 10px #0003;
-  color: #fff;
-  font: 500 1.55rem/1 system-ui, sans-serif;
-  cursor: pointer;
-}
-
-.basketball-close:hover { background: #415069; }
-.basketball-close:focus-visible { outline: 2px solid #df7e38; outline-offset: 2px; }
-.basketball-close:disabled { opacity: 0.55; cursor: default; }
-.basketball-scores { display: flex; justify-content: space-between; gap: 12px; margin: 0 18px 4px 0; font-size: 0.875rem; }
-.basketball-scores > div:last-child { text-align: right; }
-.basketball-scores dt { color: #535e6d; }
-.basketball-scores dd { margin: 2px 0 0; font-weight: 750; font-variant-numeric: tabular-nums; }
-
 .basketball-playfield {
   position: relative;
   width: min(100%, calc((100dvh - 9rem) * 480 / 370));
@@ -303,13 +261,4 @@ onUnmounted(() => cancelAnimationFrame(frameId))
   }
 }
 
-.basketball-dialog p { margin: 8px 0 0; font-size: 0.8125rem; text-align: center; }
-.basketball-feedback { min-height: 1.35em; color: #864015; line-height: 1.35; }
-
-@media (max-height: 420px) {
-  .basketball-dialog { padding: 10px; }
-  .basketball-close { width: 36px; height: 36px; top: -12px; right: -12px; }
-  .basketball-scores { line-height: 1.15; }
-  .basketball-dialog p { margin-top: 5px; line-height: 1.25; }
-}
 </style>

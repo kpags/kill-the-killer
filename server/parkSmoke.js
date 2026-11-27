@@ -15,9 +15,10 @@ export function smokeObscuredUntil(actor, clouds, now) {
 
 export function useSmokeInPark(game, playerId, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball'].includes(actor.mode) || game.winner) {
+  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.winner) {
     return 'You cannot use Smoke right now.'
   }
+  if (actor.penaltyUntil > now) return 'Items are disabled during a penalty.'
   if (actor.equippedItem !== smokeItem) return 'Equip Smoke first.'
   if (actor.itemReadyAt[smokeItem] > now) return 'Smoke is recharging.'
   actor.itemReadyAt[smokeItem] = now + smokeCooldownMs

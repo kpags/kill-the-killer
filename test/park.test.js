@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, colors, constrain, hidingPose, standingHeight } from '../shared/park.js'
 import { animationDuration, blowgunFlightMs, blowgunItem, blowgunWindupMs, rockFlightMs, rockItem, rockWindupMs } from '../shared/combat.js'
-import { createParkSession, interactInPark, parkView, setParkInput, shootBasketballInPark, stepPark } from '../server/parkSession.js'
+import { createParkSession, interactInPark, lockFiringRangeInPark, parkView, setParkInput,
+  shootBasketballInPark, stepPark } from '../server/parkSession.js'
 import { simulateBasketballShot } from '../shared/basketball.js'
+import { rangeCenter, rangeCoordinate, rangePoints, rangeResultMs, rangeRings, rangeShotDelayMs,
+  rangeSweepMax, rangeSweepMin } from '../shared/firingRange.js'
 import { attackInPark, equipParkItem } from '../server/parkCombat.js'
 import { useSmokeInPark } from '../server/parkSmoke.js'
 import { smokeItem } from '../shared/smoke.js'
@@ -299,7 +302,53 @@ test('hiding uses the sit pose at and below the area-scaled standing height', ()
   assert.equal(hidingPose(carpark, { rect: [0, 0, 40, height - 1] }), 'sit')
 })
 
-test('authored spots provide seating, dancing, info, and a timed private hide', () => {
+test('firing range clicks lock each axis, count up to five shots and share the match record', () => {
+  assert.deepEqual(rangeRings.map(({ radius }) => rangePoints(rangeCenter + radius, rangeCenter)), [25, 15, 12, 10, 8, 5])
+  assert.equal(rangePoints(rangeSweepMin, rangeSweepMin), 0)
+  assert.equal(rangeCoordinate('x', 0, 1050), rangeSweepMax)
+  assert.equal(rangeCoordinate('y', 0, 2700), rangeSweepMin)
+  const game = createEmptyPark([{ id: '0', name: 'Player 1' }, { id: '1', name: 'Player 2' }])
+  const [player, viewer] = game.players.values()
+  for (const actor of [player, viewer]) Object.assign(actor, { area: 3, x: 300, y: 274 })
+  assert.match(lockFiringRangeInPark(game, player.id, 0), /Open the Firing Range/)
+  assert.equal(interactInPark(game, player.id, 0), undefined)
+  assert.deepEqual(parkView(game, player.id, 0).firingRange.record, { name: 'Nobody', score: 0 })
+  assert.equal(parkView(game, viewer.id, 0).firingRange, undefined)
+  for (let shot = 1; shot <= 5; shot++) {
+    const start = player.firingRange.scanAt
+    assert.equal(lockFiringRangeInPark(game, player.id, start + 595, start + 525), undefined)
+    assert.equal(player.firingRange.lockedX, rangeCenter)
+    assert.equal(player.firingRange.attempts, shot - 1)
+    assert.equal(player.firingRange.yScanAt, start + 595)
+    const lockedAt = player.firingRange.yScanAt + 745
+    assert.equal(lockFiringRangeInPark(game, player.id, lockedAt, lockedAt - 70), undefined)
+    const impactAt = lockedAt + rangeShotDelayMs
+    assert.deepEqual(player.firingRange.lastShot, { x: rangeCenter, y: rangeCenter, impactAt })
+    stepPark(game, 0, impactAt - 1)
+    assert.equal(player.firingRange.attempts, shot - 1)
+    assert.equal(player.firingRange.score, (shot - 1) * 25)
+    assert.match(lockFiringRangeInPark(game, player.id, impactAt - 1), /Wait for the next attempt/)
+    stepPark(game, 0, impactAt)
+    assert.equal(player.firingRange.lastShot.points, 25)
+    assert.equal(player.firingRange.attempts, shot)
+    assert.equal(player.firingRange.score, shot * 25)
+    assert.equal(player.firingRange.scanAt, impactAt + rangeResultMs)
+    if (shot < 5) assert.match(lockFiringRangeInPark(game, player.id, player.firingRange.scanAt - 1), /Wait for the next attempt/)
+  }
+  assert.match(lockFiringRangeInPark(game, player.id, player.firingRange.scanAt), /five attempts/)
+  assert.equal(interactInPark(game, viewer.id, player.firingRange.scanAt), undefined)
+  const best = { name: 'Player 1', score: 125 }
+  assert.deepEqual(parkView(game, viewer.id, player.firingRange.scanAt).firingRange.record, best)
+  const finishedAt = player.firingRange.scanAt
+  assert.equal(interactInPark(game, player.id, finishedAt), undefined)
+  assert.equal(parkView(game, player.id, finishedAt).firingRange, undefined)
+  assert.equal(interactInPark(game, player.id, finishedAt + 50), undefined)
+  assert.equal(player.firingRange.attempts, 0)
+  assert.deepEqual(parkView(game, player.id, finishedAt + 50).firingRange.record, best)
+  assert.equal(game.basketballRecords.size, 0)
+})
+
+test('authored spots provide seating, dancing, a firing range, and a timed private hide', () => {
   const game = createEmptyPark(roster())
   const player = game.players.get('0')
   const other = game.players.get('1')
@@ -309,7 +358,7 @@ test('authored spots provide seating, dancing, info, and a timed private hide', 
   assert.equal(player.pose, 'idle')
   Object.assign(player, { area: 3, x: 300, y: 274 })
   interactInPark(game, player.id, 3)
-  assert.equal(player.mode, 'inspect')
+  assert.equal(player.mode, 'firing-range')
   assert.equal(parkView(game, player.id, 3).spotId, 'interact-B')
   interactInPark(game, player.id, 4)
   Object.assign(player, { area: 3, x: 214, y: 275 })

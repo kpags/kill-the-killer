@@ -11,7 +11,7 @@
     },
     "poison_blowgun": {
         "name": "Poisoned Blowgun",
-        "effect": "Long range attack. Slows the target for 3 seconds before dying.",
+        "effect": "Slows the model hit for 3 seconds. Kills NPCs and your assigned target when the poison expires.",
         "max_distance": "85% of the area width",
         "type": {
             "main": "attack",

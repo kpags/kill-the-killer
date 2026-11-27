@@ -162,6 +162,14 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Each opening starts a new run. The stall starts with **Nobody: 0** and records the player's name and score when they set a new best in the current match. Other players see that record when they open the same stall.
 - Players remain exposed to their hunters while shooting. A kill, stun, Poisoned Blowgun hit, or Smoke exposure closes the dialog and ends the run. Saved records carry over to later runs in the same match.
 
+### Firing Range
+
+- At the Playground firing range, press **E** or tap **Interact**. Left-click to stop the line moving left and right. The up–down line appears after the first lock. Left-click again to lock the intersection. Both lines sweep across the center 75% of the popup's width.
+- One second after the second lock, a trace and a small smoke puff mark the hit. The **N points** result blinks for two seconds before the next attempt.
+- Each opening gives the player five shots. From the bullseye outward, the six scoring areas award **25**, **15**, **12**, **10**, **8**, and **5** points. Shots outside the target score zero.
+- After the fifth shot's result, the final score blinks over the center of the target until the popup closes. **Interact to play again** appears above the target.
+- The match record starts at **Nobody: 0**. When a player beats it, the stall shows their name and score to anyone who opens the Firing Range.
+
 ### Park NPCs
 
 - Each blue marker holds a group of up to three crowd NPCs when the session starts. The server shares NPC positions and activities with everyone in the same area.
@@ -174,7 +182,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 
 ### Implemented Park combat
 
-- Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. A shot arriving from the side the target faces plays `face_hit.gif`. Rear hits and shots aligned vertically play `head_hit.gif`. Both reactions use the model's facing at impact and show a brief spark. The target blinks red, moves at half speed for three seconds, then dies. A poisoned player's screen edges blink red in sync with their model. Reduced motion uses a steady red edge and tint.
+- Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. A shot arriving from the side the target faces plays `face_hit.gif`. Rear hits and shots aligned vertically play `head_hit.gif`. Both reactions use the model's facing at impact and show a brief spark. The model blinks red and moves at half speed for three seconds. A poisoned player's screen edges blink red in sync with their model. Reduced motion uses a steady red edge and tint.
+- When poison expires, NPCs die and give the shooter the NPC penalty. The player's assigned target at the time of the shot also dies. Other players recover and see orange **Not the Target** text with a black outline float above their model. The shooter can see the message when the model is visible in their area.
 - Equip **Smoke** and click to deploy a 200 × 200 map-pixel cloud with the bottom of its animation aligned to your feet at deployment. It lasts 10 seconds from use. The first clip plays once at 20 ms per frame, the second loops at double speed until seven seconds have elapsed, and the third starts at seven seconds and holds its final frame until the smoke clears. Other players' views fade into haze on entry and clear when they leave. Inside the cloud, their views gradually clear across its final three seconds. Re-entering uses the original cloud deadline. The player who deployed the cloud keeps their normal view.
 - Equip **Rock** and click a visible player or NPC within 100 map pixels. The thrower faces the target and plays `throw.gif` as a 30 × 30 map-pixel `rock_used.gif` travels to the target. On impact the target plays `stun.gif` and cannot move for three seconds.
 - Using **Poisoned Blowgun**, **Smoke**, or **Rock** starts a cooldown of 60, 15, or 10 seconds respectively. Each inventory slot greys out and clears clockwise as its item recharges, including while another item is equipped. The Inventory wheel shows the remaining seconds below the item's name until it is ready.
@@ -182,6 +191,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - With **Fist** equipped, hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
 - NPCs, assigned targets, and any seated player can be killed. Range for seated models uses the nearest walkable point to their seat. The attacker plays the updated `kill.gif` once at 1.3× speed (about 208ms). The victim plays `death.gif` once at 1.3× speed (about 346ms) in the direction they were facing when hit. The corpse then fades out over two seconds. A lethal attack also takes priority when both players have each other as targets.
 - Killing an NPC or assigned target briefly flashes red around the killer's screen edges.
+- An NPC penalty disables use of all equipped items until it expires. The room's penalty notice shows the penalized player's current area and updates when they cross into another area.
 - NPC and assigned-target kills play a random `kill` sound. A full stun plays a random `pre_stun` sound on impact and a random `full_stun` sound 0.45 seconds later, when the stun begins. A quick stun plays random `pre_stun` and `quick_stun` sounds together on impact. The **SFX** slider controls these sounds, and players and spectators in the same area hear the same selected clips.
 - The crowd plays one random `crowd_reaction` clip in its area when the NPCs start reacting, before they flee. Each NPC kill starts one random `penalty` clip for the penalized player and their assigned hunters. It plays continuously until the penalty expires, including when a listener changes areas. Both sounds follow the **SFX** slider.
 - Hitman target kills show the white kill rating with the earned points above it, and successful stuns and punches show yellow **Stunned**. These outlined labels rise and fade above the acting player's model over 1.2 seconds and are visible only to that player.
@@ -199,6 +209,14 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-27 — Added the blinking Firing Range final score and replay hint after the fifth shot.
+
+- 2026-11-27 — Made Firing Range aim lines appear in sequence and added a delayed trace, impact smoke, and blinking point feedback.
+
+- 2026-11-27 — Disabled item use during penalties and added the five-shot Playground Firing Range with a shared high score.
+
+- 2026-11-27 — Limited lethal Blowgun hits to NPCs and assigned targets, and added floating feedback when other players recover from poison.
 
 - 2026-11-27 — Added a brief confetti burst above the basketball rim for made shots.
 

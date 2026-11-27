@@ -10,6 +10,7 @@ import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 import { penaltySoundsFor } from './parkSounds.js'
 import { smokeObscuredUntil } from './parkSmoke.js'
 import { isBasketballSpot, simulateBasketballShot } from '../shared/basketball.js'
+import { isFiringRangeSpot, rangeAttempts, rangeCoordinate, rangePoints, rangeResultMs, rangeShotDelayMs } from '../shared/firingRange.js'
 
 const staminaLimit = 100
 const profileRange = 36
@@ -65,6 +66,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
     projectiles: [],
     smokeClouds: [],
     basketballRecords: new Map(),
+    firingRangeRecords: new Map(),
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
   }
@@ -119,13 +121,19 @@ function endInteraction(actor) {
   actor.hideUntil = 0
   actor.actionStartedAt = null
   actor.basketball = null
+  actor.firingRange = null
 }
 
-function basketballKey(actor) {
+function activityKey(actor) {
   return `${actor.area}:${actor.spotId}`
 }
 
-function basketballBlocked(game, actor, now) {
+function updateActivityRecord(records, actor, score) {
+  const key = activityKey(actor)
+  if (score > (records.get(key)?.score ?? 0)) records.set(key, { name: actor.name, score })
+}
+
+function activityObscured(game, actor, now) {
   return actor.poison?.endsAt > now || smokeObscuredUntil(actor, game.smokeClouds, now) > now
 }
 
@@ -134,16 +142,13 @@ function awardBasketballShot(game, actor, now) {
   if (!round.pending || round.pending.at > now) return
   round.score += round.pending.points
   round.pending = null
-  const key = basketballKey(actor)
-  if (round.score > (game.basketballRecords.get(key)?.score ?? 0)) {
-    game.basketballRecords.set(key, { name: actor.name, score: round.score })
-  }
+  updateActivityRecord(game.basketballRecords, actor, round.score)
 }
 
 export function shootBasketballInPark(game, playerId, launch, now) {
   const actor = game.players.get(playerId)
   if (!isLiving(actor) || actor.isBot || actor.mode !== 'basketball' || game.winner
-    || basketballBlocked(game, actor, now)) {
+    || activityObscured(game, actor, now)) {
     return 'Open Basketball Shooting to take a shot.'
   }
   const round = actor.basketball
@@ -155,9 +160,43 @@ export function shootBasketballInPark(game, playerId, launch, now) {
   if (shot.points) round.pending = { points: shot.points, at: now + shot.scoreAt }
 }
 
+function awardFiringRangeShot(game, actor, now) {
+  const round = actor.firingRange
+  const shot = round.lastShot
+  if (!shot || shot.points != null || shot.impactAt > now) return
+  shot.points = rangePoints(shot.x, shot.y)
+  round.attempts++
+  round.score += shot.points
+  updateActivityRecord(game.firingRangeRecords, actor, round.score)
+}
+
+export function lockFiringRangeInPark(game, playerId, now, aimedAt = now) {
+  const actor = game.players.get(playerId)
+  if (!isLiving(actor) || actor.isBot || actor.mode !== 'firing-range' || game.winner || activityObscured(game, actor, now)) {
+    return 'Open the Firing Range to take a shot.'
+  }
+  const round = actor.firingRange
+  awardFiringRangeShot(game, actor, now)
+  if (round.attempts >= rangeAttempts) return 'You have used all five attempts.'
+  if (round.scanAt > now) return 'Wait for the next attempt.'
+  const startedAt = round.yScanAt ?? round.scanAt
+  // Account for transit time while keeping the lock within the current sweep and a recent server time.
+  const lockTime = Number.isFinite(aimedAt) ? Math.max(startedAt, now - 180, Math.min(now, aimedAt)) : now
+  if (round.lockedX === null) {
+    round.lockedX = rangeCoordinate('x', startedAt, lockTime)
+    round.yScanAt = now
+    return
+  }
+  const impactAt = now + rangeShotDelayMs
+  round.lastShot = { x: round.lockedX, y: rangeCoordinate('y', startedAt, lockTime), impactAt }
+  round.scanAt = impactAt + rangeResultMs
+  round.lockedX = null
+  round.yScanAt = null
+}
+
 export function playParkAction(game, playerId, action, now) {
   const actor = game.players.get(playerId)
-  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball'].includes(actor.mode) || game.winner) {
+  if (!isLiving(actor) || actor.isBot || actor.combat || ['consume', 'basketball', 'firing-range'].includes(actor.mode) || game.winner) {
     return 'You cannot perform an action right now.'
   }
   if (!parkActions.includes(action)) return 'That action is unavailable.'
@@ -176,6 +215,7 @@ export function interactInPark(game, playerId, now) {
   if (actor.mode === 'action') endInteraction(actor)
   else if (actor.mode !== 'free') {
     if (actor.mode === 'basketball') awardBasketballShot(game, actor, now)
+    if (actor.mode === 'firing-range') awardFiringRangeShot(game, actor, now)
     endInteraction(actor)
     return
   }
@@ -183,7 +223,10 @@ export function interactInPark(game, playerId, now) {
   const spot = nearbySpot(actor)
   if (!spot) return
   const basketball = isBasketballSpot(spot)
-  if (basketball && basketballBlocked(game, actor, now)) return 'Wait for the effect to clear before playing basketball.'
+  const firingRange = isFiringRangeSpot(spot)
+  if ((basketball || firingRange) && activityObscured(game, actor, now)) {
+    return basketball ? 'Wait for the effect to clear before playing basketball.' : 'Wait for the effect to clear before using the Firing Range.'
+  }
   if (spot.consumptionPose) {
     stopParkInput(actor)
     actor.spotId = spot.id
@@ -216,6 +259,10 @@ export function interactInPark(game, playerId, now) {
     actor.mode = 'basketball'
     actor.pose = 'idle'
     actor.basketball = { score: 0, readyAt: 0, pending: null }
+  } else if (firingRange) {
+    actor.mode = 'firing-range'
+    actor.pose = 'idle'
+    actor.firingRange = { score: 0, attempts: 0, lockedX: null, scanAt: now, yScanAt: null, lastShot: null }
   } else {
     actor.mode = 'inspect'
     actor.pose = 'idle'
@@ -254,11 +301,12 @@ export function stepPark(game, elapsedMs, now) {
   const respawned = advanceParkCombat(game, now)
   for (const actor of game.players.values()) {
     if (actor.isBot || !isLiving(actor) || game.winner || respawned.has(actor.id)) continue
-    if (actor.mode === 'basketball') {
-      if (basketballBlocked(game, actor, now)) {
+    if (actor.mode === 'basketball' || actor.mode === 'firing-range') {
+      if (activityObscured(game, actor, now)) {
         endInteraction(actor)
         stopParkInput(actor)
-      } else awardBasketballShot(game, actor, now)
+      } else if (actor.mode === 'basketball') awardBasketballShot(game, actor, now)
+      else awardFiringRangeShot(game, actor, now)
     }
     if (actor.mode === 'hide' && now >= actor.hideUntil) endInteraction(actor)
     if (actor.mode === 'consume' && now - actor.actionStartedAt >= animationDuration(actor.color, actor.pose)) {
@@ -377,14 +425,19 @@ export function parkView(game, playerId, now) {
     consumption: consumption && isLiving(actor) && !game.winner && now - consumption.startedAt < gameplayFeedbackMs
       ? consumption : undefined,
     combatFeedback: actors.includes(actor) ? actor.combatFeedback
-      ?.filter(({ area: eventArea, kind, startedAt }) => eventArea === area && now - startedAt < combatFeedbackDuration(kind))
+      ?.filter(({ area: eventArea, kind, startedAt, actorId }) => eventArea === area
+        && now - startedAt < combatFeedbackDuration(kind) && (!actorId || actors.some((other) => other.id === actorId)))
       .map(({ area, ...feedback }) => feedback) : undefined,
     target: target ? { name: target.name, color: target.color } : null,
     targetReadyAt: actor.targetReadyAt,
     basketball: actor.mode === 'basketball' && !game.winner ? {
       score: actor.basketball.score,
       ballInFlight: actor.basketball.readyAt > now,
-      record: game.basketballRecords.get(basketballKey(actor)) ?? { name: 'Nobody', score: 0 },
+      record: game.basketballRecords.get(activityKey(actor)) ?? { name: 'Nobody', score: 0 },
+    } : undefined,
+    firingRange: actor.mode === 'firing-range' && !game.winner ? {
+      ...actor.firingRange,
+      record: game.firingRangeRecords.get(activityKey(actor)) ?? { name: 'Nobody', score: 0 },
     } : undefined,
     mode: actor.mode,
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,

@@ -136,7 +136,7 @@
                 },
                 "B": {
                     "name": "Firing Range",
-                    "effect": "Opens a popup of 3 target range and a gun for simple shooting activity.",
+                    "effect": "Stop the two moving aim lines to score on a six-ring target. Each round has five shots.",
                     "type": {
                         "main": "activity",
                         "sub": "shooting"

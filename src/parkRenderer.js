@@ -13,7 +13,7 @@ const playerShadowColors = ['#ff7096', '#ffd568', '#8cefaf', '#74dfff', '#b69bff
 const narrowSceneWidth = areas[0].width
 const narrowViewport = window.matchMedia('(max-width: 640px)')
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-const feedbackColors = { rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff', information: '#ffffff' }
+const feedbackColors = { rating: '#ffffff', stun: '#ffe452', 'target-killed': '#ffffff', 'not-the-target': '#ff9f43', information: '#ffffff' }
 const penaltyGlowPadding = 22
 const penaltyGlowColor = '#ff1737'
 const blowgunHeadHeight = standingHeight * 0.81
@@ -619,10 +619,23 @@ export function createParkRenderer(canvas, art) {
     }
     if (state.smokeClouds?.length) paintSmokeClouds(ctx, art, state.smokeClouds, serverNow)
 
+    function screenHead(subject, subjectScale = modelScale) {
+      const atlas = subject.atlas ?? art[`${subject.color}-idle`]
+      const headOffset = silhouette(atlas, subject.frame ?? 0).head
+      return {
+        x: (offsetX + (subject.x + subject.facing * headOffset.x * subjectScale) * scale) * canvas.clientWidth / width,
+        y: (offsetY + (subject.y + headOffset.y * subjectScale) * scale) * canvas.clientHeight / height,
+      }
+    }
+
     const { consumption } = state
-    let feedback = state.combatFeedback ?? []
+    const feedback = []
+    const actorFeedback = []
+    for (const event of state.combatFeedback ?? []) {
+      if (event.actorId) actorFeedback.push(event)
+      else feedback.push(event)
+    }
     if (consumption || gameplayNotice) {
-      feedback = [...feedback]
       if (consumption) feedback.push({
         kind: 'information', text: `${consumption.item} consumed`, startedAt: consumption.startedAt,
       })
@@ -632,20 +645,22 @@ export function createParkRenderer(canvas, art) {
     }
     let head = null
     if (player && !state.smokeObscured && (showPrompt || feedback.length)) {
-      const atlas = player.atlas ?? art[`${player.color}-idle`]
-      const headOffset = silhouette(atlas, player.frame ?? 0).head
-      const playerScale = preview?.scale ?? modelScale
-      head = {
-        x: (offsetX + (player.x + player.facing * headOffset.x * playerScale) * scale) * canvas.clientWidth / width,
-        y: (offsetY + (player.y + headOffset.y * playerScale) * scale) * canvas.clientHeight / height,
-      }
+      head = screenHead(player, preview?.scale)
     }
     let feedbackTop = null
-    if (head && feedback.length) {
+    if (!state.smokeObscured && ((head && feedback.length) || actorFeedback.length)) {
       ctx.save()
       ctx.setTransform(width / canvas.clientWidth, 0, 0, height / canvas.clientHeight, 0, 0)
       ctx.filter = penaltyFilter
-      feedbackTop = paintFeedback(ctx, feedback, head, serverNow, canvas.clientWidth)
+      if (head && feedback.length) feedbackTop = paintFeedback(ctx, feedback, head, serverNow, canvas.clientWidth)
+      for (const event of actorFeedback) {
+        const subject = visible.get(event.actorId)
+        if (!subject) continue
+        const anchor = screenHead(subject)
+        if (anchor.x >= 0 && anchor.x <= canvas.clientWidth) {
+          paintFeedback(ctx, [event], anchor, serverNow, canvas.clientWidth)
+        }
+      }
       ctx.restore()
     }
     ctx.filter = 'none'

@@ -71,6 +71,42 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
   }
 })
 
+test('non-target players recover from blowgun poison and only they and the shooter receive feedback', () => {
+  for (const mode of ['last_man_standing', 'Hitman']) {
+    const game = emptyGame(mode)
+    const [shooter, target, victim, observer] = game.players.values()
+    victim.x = 260
+    assert.equal(game.targets.get(shooter.id), target.id)
+    equipParkItem(game, shooter.id, blowgunItem)
+    assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
+    const hitAt = blowgunWindupMs + blowgunFlightMs
+    const endsAt = hitAt + poisonMs
+    advanceParkCombat(game, hitAt)
+    setParkInput(victim, { x: 1, y: 0, sprint: false }, endsAt - 100)
+    stepPark(game, 50, endsAt - 1)
+    assert.ok(Math.abs(victim.x - 261.8) < 0.0001)
+    assert.equal(parkView(game, shooter.id, endsAt - 1).combatFeedback, undefined)
+    assert.equal(parkView(game, victim.id, endsAt - 1).combatFeedback, undefined)
+
+    stepPark(game, 50, endsAt)
+    assert.ok(Math.abs(victim.x - 265.4) < 0.0001)
+    assert.equal(victim.life, 'alive')
+    assert.equal(victim.poison, null)
+    assert.equal(victim.victimCue, undefined)
+    assert.equal(shooter.score, 0)
+    assert.equal(shooter.penaltyUntil, undefined)
+    assert.equal(game.targets.get(shooter.id), target.id)
+    assert.equal(game.soundEvents.size, 0)
+    const feedback = { kind: 'not-the-target', text: 'Not the Target', startedAt: endsAt }
+    assert.deepEqual(parkView(game, shooter.id, endsAt).combatFeedback, [{ ...feedback, actorId: victim.id }])
+    assert.deepEqual(parkView(game, victim.id, endsAt).combatFeedback, [feedback])
+    assert.equal(parkView(game, observer.id, endsAt).combatFeedback, undefined)
+    victim.mode = 'hide'
+    assert.deepEqual(parkView(game, shooter.id, endsAt).combatFeedback, [])
+    assert.deepEqual(parkView(game, victim.id, endsAt + combatFeedbackMs).combatFeedback, [])
+  }
+})
+
 test('blowgun selects and preserves the reaction facing at impact for shots from either side', () => {
   const hitAt = blowgunWindupMs + blowgunFlightMs
   for (const approach of [-1, 0, 1]) {
@@ -640,7 +676,7 @@ test('unrelated punches preserve targets, interrupt activities and finish after 
 test('NPC penalties use individual deadlines and a three-event room-wide FIFO in both modes', () => {
   for (const mode of ['last_man_standing', 'Hitman']) {
     const game = emptyGame(mode, 5)
-    for (const [playerId, now] of [['0', 0], ['1', 250], ['1', 500], ['2', 750]]) {
+    for (const [playerId, now] of [['0', 0], ['1', 250], ['2', 500], ['3', 750]]) {
       const npc = { id: `npc-${now}`, area: 0, x: 204, y: 290, color: 'purple', pose: 'walk' }
       game.npcs.set(npc.id, npc)
       advanceParkCombat(game, now)
@@ -653,23 +689,54 @@ test('NPC penalties use individual deadlines and a three-event room-wide FIFO in
     assert.equal(parkView(game, '4', 750).penaltyUntil, undefined)
     assert.deepEqual(parkView(game, '4', 750).penaltyNotices, [
       { id: 2, name: 'Player 2', area: 0, expiresAt: 10_250 },
-      { id: 3, name: 'Player 2', area: 0, expiresAt: 10_500 },
-      { id: 4, name: 'Player 3', area: 0, expiresAt: 10_750 },
+      { id: 3, name: 'Player 3', area: 0, expiresAt: 10_500 },
+      { id: 4, name: 'Player 4', area: 0, expiresAt: 10_750 },
     ])
     Object.assign(game.players.get('4'), { area: 4 })
-    Object.assign(game.players.get('1'), { area: 1 })
-    assert.deepEqual(parkView(game, '4', 900).penaltyNotices.map(({ area }) => area), [1, 1, 0])
+    Object.assign(game.players.get('2'), { area: 1 })
+    assert.deepEqual(parkView(game, '4', 900).penaltyNotices.map(({ area }) => area), [0, 1, 0])
     assert.equal(parkView(game, '0', 10_000).penaltyUntil, undefined)
     assert.equal(parkView(game, '0', 10_000).penaltyFadeAt, 10_000)
     assert.equal(parkView(game, '0', 10_499).penaltyFadeAt, 10_000)
     assert.equal(parkView(game, '0', 10_500).penaltyFadeAt, undefined)
     assert.ok(parkView(game, '0', 10_000).penaltyNotices.length)
-    game.players.delete('2')
+    game.players.delete('3')
     assert.deepEqual(parkView(game, '4', 10_250).penaltyNotices, [
-      { id: 3, name: 'Player 2', area: 1, expiresAt: 10_500 },
+      { id: 3, name: 'Player 3', area: 1, expiresAt: 10_500 },
     ])
     assert.deepEqual(parkView(game, '4', 10_500).penaltyNotices, [])
   }
+})
+
+test('penalty blocks every item and the notice follows real area transitions', () => {
+  const game = emptyGame()
+  const [player, observer, remote] = game.players.values()
+  player.x = areas[0].right - 1
+  remote.area = 4
+  const npc = { id: 'npc', area: 0, x: player.x - 4, y: player.y, color: 'blue', pose: 'idle' }
+  game.npcs.set(npc.id, npc)
+  assert.equal(attackInPark(game, player.id, npc.id, 0, 'fist'), undefined)
+  const before = { id: 1, name: player.name, area: 0, expiresAt: 10_000 }
+  for (const viewer of [observer, remote]) assert.deepEqual(parkView(game, viewer.id, 0).penaltyNotices, [before])
+  advanceParkCombat(game, 300)
+  for (const item of ['fist', blowgunItem, rockItem, smokeItem]) {
+    assert.equal(equipParkItem(game, player.id, item), undefined)
+    const result = item === smokeItem ? useSmokeInPark(game, player.id, 300)
+      : attackInPark(game, player.id, observer.id, 300, item)
+    assert.match(result, /Items are disabled/)
+  }
+  assert.equal(game.projectiles.length, 0)
+  assert.equal(game.smokeClouds.length, 0)
+  assert.deepEqual(player.itemReadyAt, {})
+  setParkInput(player, { x: 1, y: 0, sprint: false }, 300)
+  stepPark(game, 50, 350)
+  assert.equal(player.area, 1)
+  for (const viewer of [observer, remote]) {
+    assert.deepEqual(parkView(game, viewer.id, 350).penaltyNotices, [{ ...before, area: 1 }])
+  }
+  assert.match(useSmokeInPark(game, player.id, 9_999), /Items are disabled/)
+  assert.equal(useSmokeInPark(game, player.id, 10_000), undefined)
+  assert.deepEqual(parkView(game, remote.id, 10_000).penaltyNotices, [])
 })
 
 test('an NPC penalty survives Hitman death and respawn with the same deadline', () => {

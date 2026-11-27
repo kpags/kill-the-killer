@@ -152,8 +152,9 @@ test('a player death causes a synchronized scream, nearest-edge flight and stagg
 })
 
 test('a surviving solo crowd member uses a phone while an earlier death reaction is pending', () => {
-  const game = createParkSession([{ id: 'attacker' }], () => 0.5)
+  const game = createParkSession([{ id: 'attacker' }, { id: 'other-attacker' }], () => 0.5)
   const actor = game.players.get('attacker')
+  const other = game.players.get('other-attacker')
   const [first, second] = [...game.npcs.values()]
   assert.equal(first.crowd.group, second.crowd.group)
   Object.assign(actor, { area: first.area, x: first.x, y: first.y })
@@ -163,8 +164,8 @@ test('a surviving solo crowd member uses a phone while an earlier death reaction
   const originalStart = panic.startsAt
   assert.equal(panic.deathX, first.x)
   stepPark(game, 0, 250)
-  Object.assign(actor, { x: second.x, y: second.y })
-  assert.equal(attackInPark(game, actor.id, second.id, 260), undefined)
+  Object.assign(other, { area: second.area, x: second.x, y: second.y })
+  assert.equal(attackInPark(game, other.id, second.id, 260), undefined)
   assert.equal(game.npcPanics.get(0).startsAt, originalStart)
   assert.equal(game.npcPanics.get(0).deathX, first.x)
 })

@@ -8,7 +8,10 @@ import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
 import AudioSettings from './AudioSettings.vue'
 import BasketballGame from './BasketballGame.vue'
+import FiringRangeGame from './FiringRangeGame.vue'
 import { isBasketballSpot } from '../shared/basketball.js'
+import { isFiringRangeSpot } from '../shared/firingRange.js'
+import './parkActivity.css'
 import { createParkRenderer, loadParkArt } from './parkRenderer.js'
 import inventory from '../data/inventory.json'
 import { smokeItem } from '../shared/smoke.js'
@@ -39,6 +42,7 @@ const cooldowns = Object.entries(itemCooldownMs)
 const cooldownSweeps = reactive(Object.fromEntries(cooldowns.map(([item]) => [item, 360])))
 const cooldownSeconds = reactive({})
 const itemOnCooldown = computed(() => cooldownSweeps[equippedItem.value] < 360)
+const itemsDisabled = computed(() => props.state?.penaltyUntil != null)
 const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
@@ -90,10 +94,11 @@ const targetSprite = computed(() => {
 const spot = computed(() => area.value?.spots.find(({ id }) => id === props.state?.spotId))
 const hidden = computed(() => props.state?.mode === 'hide')
 const inspecting = computed(() => props.state?.mode === 'inspect' && spot.value)
-const playingBasketball = computed(() => Boolean(props.state?.basketball))
+const playingActivity = computed(() => Boolean(props.state?.basketball || props.state?.firingRange))
 const alive = computed(() => props.state?.life === 'alive')
 const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.life))
-const canAct = computed(() => alive.value && !props.state?.matchEnded && !['combat', 'consume', 'basketball'].includes(props.state?.mode))
+const canAct = computed(() => alive.value && !props.state?.matchEnded && !playingActivity.value
+  && !['combat', 'consume'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
 const lifecycleNotice = computed(() => {
   if (props.state?.winner || props.state?.victimCue?.kind === 'killed') return null
@@ -118,6 +123,7 @@ const prompt = computed(() => {
       if (nearby.type.main === 'sitting') return 'Sit'
       if (nearby.type.sub === 'music') return 'Dance'
       if (isBasketballSpot(nearby)) return 'Play basketball'
+      if (isFiringRangeSpot(nearby)) return 'Play firing range'
       return 'Inspect'
     }
   }
@@ -172,7 +178,7 @@ function showGameplayNotice(text) {
 
 async function interact() {
   if (pauseScreen.value || actionsOpen.value || inventoryOpen.value || activeCommand || props.reconnecting
-    || (!prompt.value && !playingBasketball.value)) return
+    || (!prompt.value && !playingActivity.value)) return
   activeCommand = true
   release()
   try {
@@ -186,6 +192,10 @@ async function interact() {
 
 function shootBasketball(launch) {
   return props.command('basketball_shot', { launch })
+}
+
+function lockFiringRange(aimedAt) {
+  return props.command('firing_range_lock', { aimedAt })
 }
 
 function closeActions() {
@@ -286,7 +296,7 @@ function clearHover() {
 
 async function attack(event) {
   if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value || inventoryOpen.value
-    || activeCommand || props.reconnecting || !artReady.value || itemOnCooldown.value) return
+    || activeCommand || props.reconnecting || !artReady.value || itemOnCooldown.value || itemsDisabled.value) return
   const itemId = equippedItem.value
   const usingSmoke = itemId === smokeItem
   let actorId
@@ -327,7 +337,7 @@ async function spectate(event) {
 }
 
 function keyDown(event) {
-  if (props.state?.winner || playingBasketball.value) return
+  if (props.state?.winner || playingActivity.value) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
@@ -394,7 +404,7 @@ watch(inspecting, (value, previous) => {
   else if (previous) refocus()
 }, { flush: 'post' })
 
-watch(playingBasketball, (value) => {
+watch(playingActivity, (value) => {
   if (value) clearHeldControls()
   else refocus()
 }, { flush: 'post' })
@@ -475,7 +485,8 @@ function render(now) {
     const { faded, head, hoveredId, serverNow, feedbackTop, smokeOpacity = 0,
       penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
-        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || itemOnCooldown.value ? null : pointer,
+        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || itemOnCooldown.value
+          || itemsDisabled.value ? null : pointer,
         false, gameplayNotice.value, currentAttackRange.value)
     for (const [item, duration] of cooldowns) {
       const remaining = (props.state.itemReadyAt?.[item] ?? serverNow) - serverNow
@@ -610,6 +621,7 @@ function readState() {
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
     basketball: props.state?.basketball,
+    firingRange: props.state?.firingRange,
     hidingMs: props.state?.hidingMs,
     actors: props.state?.actors ?? [],
     fadedForeground,
@@ -686,6 +698,7 @@ defineExpose({ readState })
         <ul class="park-penalty-effects">
           <li>Blurred/Distorted Vision</li>
           <li>Location Exposed to All</li>
+          <li>Items Disabled</li>
         </ul>
       </div>
       <div class="park-feedback-status" role="status" aria-atomic="false" aria-relevant="additions">
@@ -812,8 +825,10 @@ defineExpose({ readState })
       </table>
     </dialog>
 
-    <BasketballGame v-if="playingBasketball && !pauseScreen" :round="state.basketball" :shoot="shootBasketball"
+    <BasketballGame v-if="state?.basketball && !pauseScreen" :round="state.basketball" :shoot="shootBasketball"
       :reconnecting="reconnecting" @close="interact" />
+    <FiringRangeGame v-if="state?.firingRange && !pauseScreen" :round="state.firingRange" :server-time="state.serverTime"
+      :lock-aim="lockFiringRange" :reconnecting="reconnecting" @close="interact" />
     <dialog ref="pauseDialog" class="park-pause-dialog" :aria-label="pauseScreen === 'settings' ? 'Settings' : 'Pause menu'"
       @cancel.prevent="cancelPause">
       <AudioSettings v-if="pauseScreen === 'settings'" ref="settingsPanel" v-model="audioSettings" @back="backToPause" />
