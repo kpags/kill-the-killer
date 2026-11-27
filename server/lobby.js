@@ -84,6 +84,8 @@ export function createLobbyServer({
       if (player?.socket && player.socket.bufferedAmount < 32_768) {
         const state = parkView(room.game, player.id, now)
         const sounds = room.game.soundEvents.get(state.area)
+          ?.filter(({ listenerId }) => !listenerId || listenerId === player.id)
+          .map(({ kind, variant }) => ({ kind, variant }))
         send(player.socket, { type: 'park', state })
         if (sounds?.length) send(player.socket, { type: 'park_sounds', area: state.area, sounds })
       }

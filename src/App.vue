@@ -138,6 +138,7 @@ onUnmounted(() => {
     :input="connection.input"
     :command="connection.command"
     :leave="leaveRoom"
+    :play-sounds="playCombatSounds"
   />
   <RoomLobby
     v-else-if="room"

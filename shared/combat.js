@@ -21,6 +21,7 @@ export const rockWindupMs = 200
 export const rockFlightMs = 270
 export const rockSize = 30
 export const poisonMs = 3000
+export const poisonBlinkMs = 200
 export const poisonSpeedFactor = 0.5
 export const deathFadeMs = 2000
 export const respawnDelayMs = 5000
@@ -71,7 +72,7 @@ export function isRockStunned(actor, now) {
 
 export function poisonBlink(actor, now, reducedMotion) {
   return Boolean(actor?.poisonedUntil > now
-    && (reducedMotion || Math.floor((now - actor.poisonedAt) / 200) % 2 === 0))
+    && (reducedMotion || Math.floor((now - actor.poisonedAt) / poisonBlinkMs) % 2 === 0))
 }
 
 export function equippedAttackRange(item, area) {

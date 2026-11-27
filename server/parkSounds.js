@@ -4,8 +4,8 @@ function enqueue(events, key, sound) {
   events.set(key, sounds)
 }
 
-export function queueParkSound(game, area, kind) {
-  enqueue(game.soundEvents, area, { kind, variant: Math.random() })
+export function queueParkSound(game, area, kind, listenerId) {
+  enqueue(game.soundEvents, area, { kind, variant: Math.random(), ...(listenerId ? { listenerId } : {}) })
 }
 
 export function setPenaltySound(game, actor) {

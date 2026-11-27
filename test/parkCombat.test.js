@@ -42,6 +42,8 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
     assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
     assert.equal(shooter.facing, -1)
     assert.equal(shooter.pose, 'blowgun')
+    assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['blowgun-used'])
+    game.soundEvents.clear()
     const hitAt = blowgunWindupMs + blowgunFlightMs
     assert.deepEqual(parkView(game, other.id, 0).blowgunTraces, [{
       from: { x: shooter.x, y: 290, facing: -1 }, to: { x: 50, y: 290 }, startedAt: blowgunWindupMs, hitAt,
@@ -65,6 +67,9 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
     assert.equal(victim.poison, null)
     assert.equal(victim.victimCue.killerName, shooter.name)
     assert.equal(victim.combat.startedAt, hitAt + poisonMs)
+    assert.deepEqual(game.soundEvents.get(0).map(({ kind, listenerId }) => ({ kind, listenerId })), [
+      { kind: 'kill', listenerId: undefined }, { kind: 'blowgun-death', listenerId: victim.id },
+    ])
     assert.equal(shooter.score, mode === 'Hitman' ? 100 : 0)
     assert.match(attackInPark(game, shooter.id, other.id, blowgunCooldownMs - 1, blowgunItem), /recharging/)
     assert.equal(attackInPark(game, shooter.id, other.id, blowgunCooldownMs, blowgunItem), undefined)
@@ -79,6 +84,7 @@ test('non-target players recover from blowgun poison and only they and the shoot
     assert.equal(game.targets.get(shooter.id), target.id)
     equipParkItem(game, shooter.id, blowgunItem)
     assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
+    game.soundEvents.clear()
     const hitAt = blowgunWindupMs + blowgunFlightMs
     const endsAt = hitAt + poisonMs
     advanceParkCombat(game, hitAt)
@@ -105,6 +111,28 @@ test('non-target players recover from blowgun poison and only they and the shoot
     assert.deepEqual(parkView(game, shooter.id, endsAt).combatFeedback, [])
     assert.deepEqual(parkView(game, victim.id, endsAt + combatFeedbackMs).combatFeedback, [])
   }
+})
+
+test('heartbeat timing follows the nearest living hunter in the same area', () => {
+  const game = emptyGame('Hitman')
+  const [player, far, close, other] = game.players.values()
+  far.x = 380
+  close.x = 225
+  other.x = 206
+  game.targets.set(far.id, player.id)
+  game.targets.set(close.id, player.id)
+  game.targets.set(other.id, far.id)
+  const interval = () => parkView(game, player.id, 0).heartbeatIntervalMs
+  const near = interval()
+  assert.equal(near, Math.round(500 + 1050 * 25 / areas[0].width))
+  close.area = 1
+  assert.ok(interval() > near)
+  far.life = 'dying'
+  assert.equal(interval(), undefined)
+  close.area = 0
+  assert.equal(interval(), near)
+  player.life = 'eliminated'
+  assert.equal(interval(), undefined)
 })
 
 test('blowgun selects and preserves the reaction facing at impact for shots from either side', () => {
@@ -174,6 +202,7 @@ test('Rock targets within 100 map pixels and starts a three-second stun on impac
   assert.equal(equipParkItem(game, thrower.id, rockItem), undefined)
   assert.match(attackInPark(game, thrower.id, victim.id, 0, 'fist'), /Equip/)
   assert.match(attackInPark(game, thrower.id, victim.id, 0, rockItem), /100 pixels/)
+  assert.equal(game.soundEvents.size, 0)
   victim.x = 100
   assert.equal(attackInPark(game, thrower.id, victim.id, 0, rockItem), undefined)
   assert.equal(thrower.pose, 'throw')
@@ -187,8 +216,10 @@ test('Rock targets within 100 map pixels and starts a three-second stun on impac
   assert.deepEqual(view(0).blowgunTraces, [])
   advanceParkCombat(game, hitAt - 1)
   assert.equal(victim.pose, 'idle')
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['rock-used'])
   advanceParkCombat(game, hitAt)
   assert.equal(victim.pose, 'stun')
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['rock-used', 'rock-hit', 'full-stun'])
   assert.deepEqual(victim.combat, { startedAt: hitAt, endsAt })
   assert.equal(victim.life, 'alive')
   assert.equal(game.winner, null)
@@ -216,12 +247,24 @@ test('Rock stops a walking NPC during its stun and the NPC resumes its route', (
   const visible = parkView(game, thrower.id, hitAt).actors.find(({ id }) => id === npc.id)
   assert.equal(visible.pose, 'stun')
   assert.deepEqual(visible.combat, { startedAt: hitAt, endsAt: hitAt + stunMs })
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['rock-used', 'rock-hit', 'full-stun'])
   stepPark(game, 50, hitAt + stunMs - 1)
   assert.equal(npc.x, 242)
   assert.equal(thrower.penaltyUntil, undefined)
   stepPark(game, 50, hitAt + stunMs)
   assert.ok(npc.x > 242)
   assert.equal(parkView(game, thrower.id, hitAt + stunMs).actors.find(({ id }) => id === npc.id).pose, 'walk')
+})
+
+test('Rock does not play the hit sound when the target leaves before impact', () => {
+  const game = emptyGame()
+  const [thrower, victim] = game.players.values()
+  equipParkItem(game, thrower.id, rockItem)
+  assert.equal(attackInPark(game, thrower.id, victim.id, 0, rockItem), undefined)
+  victim.area = 1
+  advanceParkCombat(game, rockWindupMs + rockFlightMs)
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['rock-used'])
+  assert.equal(game.soundEvents.has(1), false)
 })
 
 test('Rock and Smoke recharge independently and keep their deadlines across equipment changes', () => {
@@ -274,6 +317,8 @@ test('only the equipped item can be used and a smoke cloud obscures other player
   }
   equipParkItem(game, owner.id, 'smoke')
   assert.equal(useSmokeInPark(game, owner.id, 0), undefined)
+  assert.deepEqual(game.soundEvents.get(0).map(({ kind }) => kind), ['smoke-used'])
+  assert.equal(game.soundEvents.has(remote.area), false)
   const view = (actor, now = 0) => parkView(game, actor.id, now)
   assert.deepEqual(view(observer).smokeClouds, [{ x: owner.x, y: owner.y, startedAt: 0, endsAt: smokeDurationMs }])
   assert.deepEqual(view(remote).smokeClouds, [])

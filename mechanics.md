@@ -182,10 +182,13 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 
 ### Implemented Park combat
 
+- When a living player shares an area with someone assigned to kill them, a faint red pulse fills the screen edges. Each pulse plays a private heartbeat through the SFX setting. The pulse and sound speed up as the hunter approaches. In Hitman, the nearest hunter in the area sets the pace.
 - Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. A shot arriving from the side the target faces plays `face_hit.gif`. Rear hits and shots aligned vertically play `head_hit.gif`. Both reactions use the model's facing at impact and show a brief spark. The model blinks red and moves at half speed for three seconds. A poisoned player's screen edges blink red in sync with their model. Reduced motion uses a steady red edge and tint.
 - When poison expires, NPCs die and give the shooter the NPC penalty. The player's assigned target at the time of the shot also dies. Other players recover and see orange **Not the Target** text with a black outline float above their model. The shooter can see the message when the model is visible in their area.
+- An accepted Blowgun shot plays `used.mp3` in its area. The hit player hears `damage.mp3` on each poison flash and `death.mp3` if the poison kills them. `not_target.mp3` plays for the players who see the floating message. These clips use the SFX setting.
 - Equip **Smoke** and click to deploy a 200 × 200 map-pixel cloud with the bottom of its animation aligned to your feet at deployment. It lasts 10 seconds from use. The first clip plays once at 20 ms per frame, the second loops at double speed until seven seconds have elapsed, and the third starts at seven seconds and holds its final frame until the smoke clears. Other players' views fade into haze on entry and clear when they leave. Inside the cloud, their views gradually clear across its final three seconds. Re-entering uses the original cloud deadline. The player who deployed the cloud keeps their normal view.
 - Equip **Rock** and click a visible player or NPC within 100 map pixels. The thrower faces the target and plays `throw.gif` as a 30 × 30 map-pixel `rock_used.gif` travels to the target. On impact the target plays `stun.gif` and cannot move for three seconds.
+- Deploying **Smoke** or throwing **Rock** plays the item's `used.mp3` for everyone in the area. Rock also plays `hit.mp3` there when it hits a player or NPC. Smoke's `affected.mp3` loops only for players inside another player's smoke and stops when they leave or the cloud expires. These clips follow the **SFX** setting.
 - Using **Poisoned Blowgun**, **Smoke**, or **Rock** starts a cooldown of 60, 15, or 10 seconds respectively. Each inventory slot greys out and clears clockwise as its item recharges, including while another item is equipped. The Inventory wheel shows the remaining seconds below the item's name until it is ready.
 
 - With **Fist** equipped, hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
@@ -209,6 +212,10 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-27 — Added the Smoke deployment and private exposure sounds, and Rock throw and impact sounds.
+
+- 2026-11-27 — Added a distance-based hunter heartbeat and four Poisoned Blowgun sound cues.
 
 - 2026-11-27 — Added the blinking Firing Range final score and replay hint after the fifth shot.
 

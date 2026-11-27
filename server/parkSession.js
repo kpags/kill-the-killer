@@ -364,6 +364,17 @@ export function stepPark(game, elapsedMs, now) {
   stepParkNpcs(game, elapsedMs, now)
 }
 
+function heartbeatInterval(game, actor) {
+  if (!isLiving(actor) || game.winner) return
+  let distance = Infinity
+  for (const hunter of game.players.values()) {
+    if (hunter.area === actor.area && isLiving(hunter) && game.targets.get(hunter.id) === actor.id) {
+      distance = Math.min(distance, Math.hypot(hunter.x - actor.x, hunter.y - actor.y))
+    }
+  }
+  if (Number.isFinite(distance)) return Math.round(500 + 1050 * Math.min(1, distance / areas[actor.area].width))
+}
+
 export function parkView(game, playerId, now) {
   const actor = game.players.get(playerId)
   refreshParkTargets(game, now)
@@ -393,6 +404,7 @@ export function parkView(game, playerId, now) {
   return {
     area,
     serverTime: now,
+    heartbeatIntervalMs: heartbeatInterval(game, actor),
     equippedItem: actor.equippedItem,
     smokeObscured,
     smokeOpaque,

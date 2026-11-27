@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { areas, gameplayFeedbackMs } from '../shared/park.js'
 import { combatCueFadeMs, equippedAttackRange, itemCooldownMs, killFlashMs,
-  poisonBlink, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
+  poisonBlink, poisonBlinkMs, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
 import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
 import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
@@ -24,6 +24,7 @@ const props = defineProps({
   input: { type: Function, required: true },
   command: { type: Function, required: true },
   leave: { type: Function, required: true },
+  playSounds: { type: Function, required: true },
 })
 
 const directions = [
@@ -56,6 +57,7 @@ const artReady = ref(false)
 const penaltyActive = ref(false)
 const penaltyStrength = ref(0)
 const poisonEdgeVisible = ref(false)
+const heartbeatOpacity = ref(0)
 const stunnedView = ref(false)
 const smudgeWidth = computed(() => stunnedView.value ? 5.5 : 3.2 * penaltyStrength.value)
 const killerCredit = computed(() => {
@@ -140,6 +142,10 @@ let activeCommand = false
 let pointer = null
 let hoveredActorId = null
 let smokeViewOpacity = 0
+let heartbeatPhase = 0
+let lastHeartbeatFrame
+let lastDamageBeat
+let lastNotTargetFeedbackAt = -Infinity
 
 function transmit() {
   const active = new Set([...pressed, ...pointers.values()])
@@ -479,10 +485,42 @@ async function exitGame() {
   }
 }
 
+function updateThreatEffects(now, serverNow, self, notTargetFeedbackAt) {
+  const sounds = []
+  const interval = props.reconnecting ? null : props.state.heartbeatIntervalMs
+  if (interval) {
+    const phase = heartbeatPhase + (now - (lastHeartbeatFrame ?? now)) / interval
+    if (lastHeartbeatFrame == null || phase >= 1) sounds.push({ kind: 'heartbeat', maxDurationMs: interval })
+    lastHeartbeatFrame = now
+    heartbeatPhase = phase % 1
+    heartbeatOpacity.value = reducedMotion.matches ? 1 : Math.max(0, 1 - heartbeatPhase / 0.34)
+  } else {
+    lastHeartbeatFrame = undefined
+    heartbeatPhase = 0
+    heartbeatOpacity.value = 0
+  }
+
+  poisonEdgeVisible.value = poisonBlink(self, serverNow, reducedMotion.matches)
+  if (props.reconnecting) return
+  if (poisonBlink(self, serverNow, false)) {
+    const cycle = poisonBlinkMs * 2
+    const beat = self.poisonedAt + Math.floor((serverNow - self.poisonedAt) / cycle) * cycle
+    if (beat !== lastDamageBeat) {
+      sounds.push({ kind: 'blowgun-damage', maxDurationMs: cycle })
+      lastDamageBeat = beat
+    }
+  }
+  if (notTargetFeedbackAt > lastNotTargetFeedbackAt) {
+    sounds.push({ kind: 'blowgun-not-target' })
+    lastNotTargetFeedbackAt = notTargetFeedbackAt
+  }
+  if (sounds.length) props.playSounds(sounds)
+}
+
 function render(now) {
   if (props.state) {
     const label = overheadPrompt.value
-    const { faded, head, hoveredId, serverNow, feedbackTop, smokeOpacity = 0,
+    const { faded, head, hoveredId, serverNow, feedbackTop, notTargetFeedbackAt, smokeOpacity = 0,
       penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
         pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || itemOnCooldown.value
@@ -495,7 +533,7 @@ function render(now) {
       cooldownSeconds[item] = Math.max(0, Math.ceil(remaining / 1000))
     }
     const self = props.state.actors.find(({ id }) => id === props.playerId)
-    poisonEdgeVisible.value = poisonBlink(self, serverNow, reducedMotion.matches)
+    updateThreatEffects(now, serverNow, self, notTargetFeedbackAt)
     penaltyActive.value = penalized
     penaltyStrength.value = strength
     fadedForeground = faded
@@ -615,6 +653,7 @@ function readState() {
     cooldownSweeps: { ...cooldownSweeps },
     cooldownSeconds: { ...cooldownSeconds },
     poisonEdgeVisible: poisonEdgeVisible.value,
+    heartbeatIntervalMs: props.state?.heartbeatIntervalMs,
     blowgunTraces: props.state?.blowgunTraces ?? [],
     rockThrows: props.state?.rockThrows ?? [],
     mode: props.state?.mode,
@@ -842,6 +881,7 @@ defineExpose({ readState })
       </section>
     </dialog>
 
+    <div v-if="heartbeatOpacity > 0" class="park-heartbeat-edge" :style="{ opacity: heartbeatOpacity }" aria-hidden="true"></div>
     <div v-if="state?.killFlashAt != null && !reconnecting" :key="state.killFlashAt"
       class="park-kill-flash" :style="{ '--flash-duration': `${killFlashMs}ms` }" aria-hidden="true"></div>
     <div v-if="poisonEdgeVisible" class="park-poison-edge" aria-hidden="true"></div>
@@ -1124,7 +1164,7 @@ defineExpose({ readState })
   background: color-mix(in srgb, #171717 calc(var(--penalty-grayscale) * 100%), #101728);
 }
 
-.park-penalized > :not(.park-stage, .park-victim-cue, .park-winner, .park-poison-edge),
+.park-penalized > :not(.park-stage, .park-victim-cue, .park-winner, .park-poison-edge, .park-heartbeat-edge),
 .park-penalized .park-stage > :not(canvas, .park-penalty-status),
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
@@ -1267,11 +1307,16 @@ defineExpose({ readState })
 }
 
 .park-kill-flash,
-.park-poison-edge {
+.park-poison-edge,
+.park-heartbeat-edge {
   position: fixed;
   inset: 0;
   z-index: 2;
   pointer-events: none;
+}
+
+.park-heartbeat-edge {
+  box-shadow: inset 0 0 clamp(24px, 6vmin, 66px) clamp(4px, 1vmin, 12px) #ed1e3538;
 }
 
 .park-kill-flash {

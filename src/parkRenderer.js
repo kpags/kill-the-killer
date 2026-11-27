@@ -648,23 +648,30 @@ export function createParkRenderer(canvas, art) {
       head = screenHead(player, preview?.scale)
     }
     let feedbackTop = null
+    let notTargetFeedbackAt
     if (!state.smokeObscured && ((head && feedback.length) || actorFeedback.length)) {
       ctx.save()
       ctx.setTransform(width / canvas.clientWidth, 0, 0, height / canvas.clientHeight, 0, 0)
       ctx.filter = penaltyFilter
-      if (head && feedback.length) feedbackTop = paintFeedback(ctx, feedback, head, serverNow, canvas.clientWidth)
+      if (head && feedback.length) {
+        feedbackTop = paintFeedback(ctx, feedback, head, serverNow, canvas.clientWidth)
+        notTargetFeedbackAt = feedback.findLast(({ kind }) => kind === 'not-the-target')?.startedAt
+      }
       for (const event of actorFeedback) {
         const subject = visible.get(event.actorId)
         if (!subject) continue
         const anchor = screenHead(subject)
         if (anchor.x >= 0 && anchor.x <= canvas.clientWidth) {
           paintFeedback(ctx, [event], anchor, serverNow, canvas.clientWidth)
+          if (event.kind === 'not-the-target') {
+            notTargetFeedbackAt = Math.max(notTargetFeedbackAt ?? -Infinity, event.startedAt)
+          }
         }
       }
       ctx.restore()
     }
     ctx.filter = 'none'
     if (smokeOpacity > 0) paintSmokeHaze(ctx, art, smokeAge, width, height, smokeOpacity)
-    return { faded, head, hoveredId, attackId, serverNow, feedbackTop, penaltyActive, penaltyStrength, smokeOpacity }
+    return { faded, head, hoveredId, attackId, serverNow, feedbackTop, notTargetFeedbackAt, penaltyActive, penaltyStrength, smokeOpacity }
   }
 }

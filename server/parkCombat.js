@@ -149,6 +149,7 @@ function fireProjectile(game, actor, victim, isTarget, now) {
   })
   actor.itemReadyAt[itemId] = now + itemCooldownMs[itemId]
   beginCombat(actor, throwingRock ? 'throw' : 'blowgun', now)
+  queueParkSound(game, actor.area, throwingRock ? 'rock-used' : 'blowgun-used')
 }
 
 function recordPlayerStun(game, actor, victim, now, defensive) {
@@ -163,6 +164,7 @@ function recordPlayerStun(game, actor, victim, now, defensive) {
 function stunWithRock(game, shot, victim) {
   const { hitAt, attackerId } = shot
   const endsAt = hitAt + stunMs
+  queueParkSound(game, victim.area, 'rock-hit')
   if (isRockStunned(victim, hitAt) || (victim.pose === 'stun' && victim.combat?.endsAt > hitAt)) return
   const source = game.players.get(attackerId)
   if (game.npcs.has(victim.id)) {
@@ -206,6 +208,7 @@ function advanceProjectiles(game, now) {
     const actor = game.players.get(attackerId)
     if (isTarget || game.npcs.has(victim.id)) {
       killModel(game, victim, { actor, isTarget, killerName }, endsAt)
+      if (isTarget && !victim.isBot) queueParkSound(game, victim.area, 'blowgun-death', victim.id)
     } else {
       victim.poison = null
       addCombatFeedback(victim, 'not-the-target', 'Not the Target', endsAt)
