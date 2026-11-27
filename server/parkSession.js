@@ -2,8 +2,9 @@ import { randomInt } from 'node:crypto'
 import { areas, colors, constrain, gameplayFeedbackMs, nearbySpot, randomGroundPoint, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { spawnParkNpcs, stepParkNpcs } from './parkNpcs.js'
 import { claimSeat } from './parkSeats.js'
-import { animationDuration, combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, poisonSpeedFactor,
-  respawnFadeMs, victimCueEndsAt } from '../shared/combat.js'
+import { animationDuration, blowgunItem, combatFeedbackDuration, isLiving, killFlashMs, penaltyFadeMs, poisonSpeedFactor,
+  respawnFadeMs, rockItem, stunMs, victimCueEndsAt } from '../shared/combat.js'
+import { smokeFadeMs } from '../shared/smoke.js'
 import { adjustProfile, hideProfileRate, hideTransitionMs, profileBarSize } from '../shared/profile.js'
 import { advanceParkCombat, refreshParkTargets } from './parkCombat.js'
 import { penaltySoundsFor } from './parkSounds.js'
@@ -34,6 +35,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
       mode: 'free',
       life: 'alive',
       equippedItem: 'fist',
+      itemReadyAt: {},
       combat: null,
       generation: 0,
       spotId: null,
@@ -59,7 +61,7 @@ export function createParkSession(players, random = Math.random, modeId = 'last_
     players: roster, targetOrder, targets: new Map(), modeId,
     penaltyNotices: [], penaltySequence: 0,
     soundEvents: new Map(),
-    blowgunShots: [],
+    projectiles: [],
     smokeClouds: [],
     initialPlayerCount: players.length, winner: null, winnerAt: null,
     npcs: new Map(), walkers: [], crowdRespawns: [], npcPanics: new Map(), random,
@@ -272,6 +274,7 @@ export function parkView(game, playerId, now) {
   const area = spectating ? actor.spectatorArea ?? actor.area : actor.area
   const smokeUntil = smokeObscuredUntil(actor, game.smokeClouds, now)
   const smokeObscured = smokeUntil > now
+  const smokeOpaque = smokeUntil - now > smokeFadeMs
   const restricted = !spectating && !isLiving(actor) && game.modeId === 'last_man_standing'
   const { consumption } = actor
   const penaltyUntil = actor.penaltyUntil > now ? actor.penaltyUntil : undefined
@@ -282,21 +285,25 @@ export function parkView(game, playerId, now) {
   })
   const actors = [...game.players.values(), ...game.npcs.values()]
     .filter((other) => other.area === area
-      && (!smokeObscured || other === actor)
+      && (!smokeOpaque || other === actor)
       && (isLiving(other) || (other.life === 'dying' && now < other.vanishesAt))
       && (other === actor || other.mode !== 'hide')
       && (!restricted || game.npcs.has(other.id) || other === actor
         || other.life === 'dying' || other.combat || other.pose === 'sprint'))
+  const projectiles = game.projectiles.filter((shot) => shot.area === area)
   return {
     area,
     serverTime: now,
     equippedItem: actor.equippedItem,
     smokeObscured,
+    smokeOpaque,
     smokeUntil,
     smokeClouds: game.smokeClouds.filter((cloud) => cloud.area === area && cloud.endsAt > now)
       .map(({ x, y, startedAt, endsAt }) => ({ x, y, startedAt, endsAt })),
-    blowgunReadyAt: actor.blowgunReadyAt,
-    blowgunTraces: game.blowgunShots.filter((shot) => shot.area === area)
+    itemReadyAt: { ...actor.itemReadyAt },
+    blowgunTraces: projectiles.filter(({ itemId }) => itemId === blowgunItem)
+      .map(({ from, to, startedAt, hitAt }) => ({ from, to, startedAt, hitAt })),
+    rockThrows: projectiles.filter(({ itemId }) => itemId === rockItem)
       .map(({ from, to, startedAt, hitAt }) => ({ from, to, startedAt, hitAt })),
     penaltyUntil,
     penaltySounds: penaltySoundsFor(game, playerId, now),
@@ -327,7 +334,7 @@ export function parkView(game, playerId, now) {
     spotId: isLiving(actor) && !actor.combat && !game.winner ? actor.spotId ?? nearbySpot(actor)?.id ?? null : null,
     hidingMs: Math.ceil(Math.max(0, actor.hideUntil - now)),
     actors: actors.map(({ id, color, area: actorArea, x, y, facing, pose, mode, animationOffset, actionStartedAt,
-      life, combat, vanishesAt, generation, poison, penaltyUntil: modelPenaltyUntil }) => ({
+      life, combat, vanishesAt, generation, poison, rockStunnedUntil, penaltyUntil: modelPenaltyUntil }) => ({
       id, color, area: actorArea, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10,
       facing, pose, hidden: mode === 'hide', animationOffset, life: life ?? 'alive',
       combat: combat ? { startedAt: combat.startedAt, endsAt: combat.endsAt } : null,
@@ -335,6 +342,9 @@ export function parkView(game, playerId, now) {
       oneShot: mode === 'panic' && actionStartedAt != null ? true : undefined,
       ...(modelPenaltyUntil > now ? { penaltyGlowUntil: modelPenaltyUntil } : {}),
       ...(poison ? { poisonedAt: poison.hitAt, poisonedUntil: poison.endsAt } : {}),
+      ...(rockStunnedUntil > now && (!life || life === 'alive') ? {
+        pose: 'stun', groundPose: pose, combat: { startedAt: rockStunnedUntil - stunMs, endsAt: rockStunnedUntil }, oneShot: undefined,
+      } : {}),
       vanishesAt, generation: generation ?? 0,
     })),
   }

@@ -1,7 +1,7 @@
 import metadata from '../assets/gameplay/atlases.json'
 import { areas, designHeight, designWidth, gameplayFeedbackMs, hidingPose, standingHeight } from '../shared/park.js'
 import { blowgunTraceFadeMs, combatCueFadeMs, combatFeedbackDuration, combatPlaybackRate, deathOpacity, oneShotPoses,
-  npcPenaltyMs, penaltyFadeMs, targetKilledSlideMs } from '../shared/combat.js'
+  npcPenaltyMs, penaltyFadeMs, poisonBlink, rockSize, targetKilledSlideMs } from '../shared/combat.js'
 import { frameAt, hoverOpacity, pickModel } from './parkPicking.js'
 import { smokeDurationMs, smokeFadeMs, smokeHeight, smokePlaybackRate, smokeViewTransitionMs, smokeWidth } from '../shared/smoke.js'
 
@@ -83,6 +83,18 @@ function paintFrame(ctx, atlas, index, x = 0, y = 0, drawWidth = atlas.width, dr
   ctx.drawImage(image, index % columns * width, Math.floor(index / columns) * height, width, height, x, y, drawWidth, drawHeight)
 }
 
+function paintRockThrows(ctx, atlas, throws, now, area) {
+  const handHeight = standingHeight * area.modelScale * 0.67
+  for (const { from, to, startedAt, hitAt } of throws) {
+    if (now < startedAt || now >= hitAt) continue
+    const phase = (now - startedAt) / (hitAt - startedAt)
+    const fromX = from.x + from.facing * Math.min(14 * area.modelScale, Math.abs(to.x - from.x) / 2)
+    const x = fromX + (to.x - fromX) * phase
+    const y = from.y + (to.y - from.y) * phase - handHeight - 22 * Math.sin(Math.PI * phase)
+    paintFrame(ctx, atlas, frameAt(atlas, now - startedAt, true), x - rockSize / 2, y - rockSize / 2, rockSize, rockSize)
+  }
+}
+
 function paintSmokeClouds(ctx, art, clouds, now) {
   const expansion = art['smoke-start']
   const drift = art['smoke-hold']
@@ -99,13 +111,17 @@ function paintSmokeClouds(ctx, art, clouds, now) {
   }
 }
 
-function paintSmokeHaze(ctx, atlas, time, width, height, opacity) {
+function paintSmokeHaze(ctx, art, age, width, height, opacity) {
+  const fadeAge = age - (smokeDurationMs - smokeFadeMs)
+  const fading = fadeAge >= 0
+  const atlas = fading ? art['smoke-end'] : art['smoke-hold']
+  const phaseAge = fading ? fadeAge * atlas.duration / smokeFadeMs : age * smokePlaybackRate
   ctx.resetTransform()
   ctx.globalAlpha = opacity
   ctx.fillStyle = '#ababb3'
   ctx.fillRect(0, 0, width, height)
   ctx.globalAlpha = opacity * 0.46
-  paintFrame(ctx, atlas, frameAt(atlas, time * smokePlaybackRate), -width * 0.25, -height * 0.65, width * 1.5, height * 2.3)
+  paintFrame(ctx, atlas, frameAt(atlas, phaseAge, fading), -width * 0.25, -height * 0.65, width * 1.5, height * 2.3)
   ctx.globalAlpha = 1
 }
 
@@ -370,7 +386,7 @@ export function createParkRenderer(canvas, art) {
     } else {
       smokeOpacity = Math.max(0, smokeOpacity - smokeDelta)
     }
-    smokeOpacity = Math.min(smokeOpacity, Math.max(0, (smokeUntil - serverNow) / smokeViewTransitionMs))
+    smokeOpacity = Math.min(smokeOpacity, Math.max(0, (smokeUntil - serverNow) / smokeFadeMs))
     const smokeAge = serverNow - (smokeUntil - smokeDurationMs)
     const penaltyActive = state.penaltyUntil > serverNow
     const penaltyEnd = state.penaltyUntil ?? state.penaltyFadeAt ?? -Infinity
@@ -391,15 +407,16 @@ export function createParkRenderer(canvas, art) {
     if (smokeOpacity === 1) {
       visible.clear()
       hoveredId = null
-      paintSmokeHaze(ctx, art['smoke-hold'], smokeAge, width, height, smokeOpacity)
+      paintSmokeHaze(ctx, art, smokeAge, width, height, smokeOpacity)
       return { faded: 0, head: null, hoveredId, attackId: null, serverNow, penaltyActive, penaltyStrength, smokeOpacity }
     }
     const actors = state.actors.filter((actor) => !actor.hidden && deathOpacity(actor, serverNow) > 0).map((actor) => {
       const previous = visible.get(actor.id)
-      const poseTime = previous?.groundPose === actor.pose ? previous.poseTime : time - (actor.animationOffset ?? 0)
+      const groundPose = actor.groundPose ?? actor.pose
+      const poseTime = previous?.groundPose === groundPose ? previous.poseTime : time - (actor.animationOffset ?? 0)
       const headHitAge = serverNow - actor.poisonedAt
       const headHit = art[`${actor.color}-head-hit`]
-      const pose = headHitAge >= 0 && headHitAge < headHit.duration ? 'head-hit' : actor.pose
+      const pose = actor.pose !== 'stun' && headHitAge >= 0 && headHitAge < headHit.duration ? 'head-hit' : actor.pose
       const isSeated = pose === 'sit'
       const atlas = art[`${actor.color}-${pose}`]
       const playbackRate = actor.pose === 'talk' || actor.pose.startsWith('phone-') ? crowdPlaybackRate : 1
@@ -414,7 +431,7 @@ export function createParkRenderer(canvas, art) {
       return {
         ...actor,
         pose,
-        groundPose: actor.pose,
+        groundPose,
         poseTime,
         atlas,
         frame,
@@ -426,7 +443,7 @@ export function createParkRenderer(canvas, art) {
         y: canInterpolate ? previous.y + (actor.y - previous.y) * 0.42 : actor.y + seatOffset,
       }
     })
-    if (state.smokeObscured) {
+    if (state.smokeOpaque) {
       // Fade over the last visible actors while the server withholds live positions.
       for (const actor of visible.values()) if (actor.id !== playerId) actors.push(actor)
     }
@@ -503,10 +520,9 @@ export function createParkRenderer(canvas, art) {
       } else {
         paintFrame(ctx, actor.atlas, actor.frame, -80, -footRow)
       }
-      const poisonBlink = actor.poisonedUntil > serverNow
-        && (reducedMotion.matches || Math.floor((serverNow - actor.poisonedAt) / 200) % 2 === 0)
-      if (poisonBlink || actor.id === hoveredId) {
-        const tintColor = poisonBlink ? '#ff203b' : '#910123'
+      const blinking = poisonBlink(actor, serverNow, reducedMotion.matches)
+      if (blinking || actor.id === hoveredId) {
+        const tintColor = blinking ? '#ff203b' : '#910123'
         const key = `${actor.color}-${actor.pose}:${actor.frame}:${tintColor}`
         if (!tints.has(key)) {
           const tint = document.createElement('canvas')
@@ -519,13 +535,14 @@ export function createParkRenderer(canvas, art) {
           tintCtx.fillRect(0, 0, 160, 136)
           tints.set(key, tint)
         }
-        ctx.globalAlpha = poisonBlink ? 0.75 : hoverOpacity(time - hoverStartedAt, reducedMotion.matches)
+        ctx.globalAlpha = blinking ? 0.75 : hoverOpacity(time - hoverStartedAt, reducedMotion.matches)
         if (penaltyStrength) ctx.filter = penaltyFilter
         ctx.drawImage(tints.get(key), -80, -footRow)
       }
       ctx.restore()
     }
 
+    if (state.rockThrows?.length) paintRockThrows(ctx, art['rock-projectile'], state.rockThrows, serverNow, area)
     let faded = 0
     const silhouetteReach = 55 * area.modelScale
     area.foreground.forEach((region, index) => {
@@ -596,7 +613,7 @@ export function createParkRenderer(canvas, art) {
       ctx.restore()
     }
     ctx.filter = 'none'
-    if (smokeOpacity > 0) paintSmokeHaze(ctx, art['smoke-hold'], smokeAge, width, height, smokeOpacity)
+    if (smokeOpacity > 0) paintSmokeHaze(ctx, art, smokeAge, width, height, smokeOpacity)
     return { faded, head, hoveredId, attackId, serverNow, feedbackTop, penaltyActive, penaltyStrength, smokeOpacity }
   }
 }

@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { areas, colors, constrain } from '../shared/park.js'
 import { animationDuration, blowgunCooldownMs, blowgunFlightMs, blowgunItem, blowgunRange, blowgunWindupMs,
-  combatFeedbackMs, deathOpacity, killFlashMs, poisonMs } from '../shared/combat.js'
+  combatFeedbackMs, deathOpacity, killFlashMs, poisonMs, rockCooldownMs, rockFlightMs, rockItem, rockWindupMs, stunMs } from '../shared/combat.js'
 import { profileFill } from '../shared/profile.js'
 import { createParkSession, interactInPark, parkView, playParkAction, setParkInput, stepPark } from '../server/parkSession.js'
 import { advanceParkCombat, attackInPark, equipParkItem, refreshParkTargets, spectateInPark } from '../server/parkCombat.js'
 import { useSmokeInPark } from '../server/parkSmoke.js'
-import { smokeDurationMs, smokeHeight, smokeWidth } from '../shared/smoke.js'
+import { smokeCooldownMs, smokeDurationMs, smokeHeight, smokeItem, smokeWidth } from '../shared/smoke.js'
 
 const deathDuration = 450 / 1.3
 const corpseDuration = deathDuration + 2000
@@ -37,7 +37,7 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
     assert.match(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), /Equip/)
     equipParkItem(game, shooter.id, blowgunItem)
     assert.match(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), /430.95 pixels/)
-    assert.equal(shooter.blowgunReadyAt, undefined)
+    assert.equal(shooter.itemReadyAt[blowgunItem], undefined)
     victim.x = 50
     assert.equal(attackInPark(game, shooter.id, victim.id, 0, blowgunItem), undefined)
     assert.equal(shooter.facing, -1)
@@ -47,7 +47,8 @@ test('the blowgun validates range, traces the shot, halves movement, and applies
       from: { x: shooter.x, y: 290, facing: -1 }, to: { x: 50, y: 290 }, startedAt: blowgunWindupMs, hitAt,
     }])
     assert.deepEqual(parkView(game, remote.id, 0).blowgunTraces, [])
-    assert.equal(parkView(game, other.id, 0).blowgunReadyAt, undefined)
+    assert.equal(parkView(game, shooter.id, 0).itemReadyAt[blowgunItem], blowgunCooldownMs)
+    assert.deepEqual(parkView(game, other.id, 0).itemReadyAt, {})
     advanceParkCombat(game, hitAt - 1)
     assert.equal(victim.poison, undefined)
     advanceParkCombat(game, hitAt)
@@ -106,6 +107,95 @@ test('the earlier poison deadline decides the final elimination when both expire
   assert.equal(first.poison, null)
 })
 
+test('Rock targets within 100 map pixels and starts a three-second stun on impact', () => {
+  const game = emptyGame('last_man_standing', 2)
+  const [thrower, victim] = game.players.values()
+  victim.x = 99.9
+  assert.equal(equipParkItem(game, thrower.id, rockItem), undefined)
+  assert.match(attackInPark(game, thrower.id, victim.id, 0, 'fist'), /Equip/)
+  assert.match(attackInPark(game, thrower.id, victim.id, 0, rockItem), /100 pixels/)
+  victim.x = 100
+  assert.equal(attackInPark(game, thrower.id, victim.id, 0, rockItem), undefined)
+  assert.equal(thrower.pose, 'throw')
+  assert.equal(thrower.facing, -1)
+  const hitAt = rockWindupMs + rockFlightMs
+  const endsAt = hitAt + stunMs
+  const view = (now) => parkView(game, victim.id, now)
+  assert.deepEqual(view(0).rockThrows, [{
+    from: { x: 200, y: 290, facing: -1 }, to: { x: 100, y: 290 }, startedAt: rockWindupMs, hitAt,
+  }])
+  assert.deepEqual(view(0).blowgunTraces, [])
+  advanceParkCombat(game, hitAt - 1)
+  assert.equal(victim.pose, 'idle')
+  advanceParkCombat(game, hitAt)
+  assert.equal(victim.pose, 'stun')
+  assert.deepEqual(victim.combat, { startedAt: hitAt, endsAt })
+  assert.equal(victim.life, 'alive')
+  assert.equal(game.winner, null)
+  assert.deepEqual(view(hitAt).rockThrows, [])
+  setParkInput(victim, { x: 1, y: 0, sprint: true }, endsAt - 50)
+  stepPark(game, 50, endsAt - 1)
+  assert.equal(victim.x, 100)
+  assert.equal(victim.pose, 'stun')
+  advanceParkCombat(game, endsAt)
+  assert.equal(victim.pose, 'idle')
+  assert.equal(victim.combat, null)
+  assert.equal(game.targets.get(victim.id), thrower.id)
+})
+
+test('Rock stops a walking NPC during its stun and the NPC resumes its route', () => {
+  const game = emptyGame()
+  const thrower = game.players.get('0')
+  const npc = { id: 'npc', color: 'blue', facing: 1, pose: 'walk', area: 0, x: 242, y: 290 }
+  game.npcs.set(npc.id, npc)
+  game.walkers.push({ actor: npc, area: 0, direction: 1, visit: null, resumeAt: null })
+  equipParkItem(game, thrower.id, rockItem)
+  assert.equal(attackInPark(game, thrower.id, npc.id, 0, rockItem), undefined)
+  const hitAt = rockWindupMs + rockFlightMs
+  stepPark(game, 50, hitAt)
+  const visible = parkView(game, thrower.id, hitAt).actors.find(({ id }) => id === npc.id)
+  assert.equal(visible.pose, 'stun')
+  assert.deepEqual(visible.combat, { startedAt: hitAt, endsAt: hitAt + stunMs })
+  stepPark(game, 50, hitAt + stunMs - 1)
+  assert.equal(npc.x, 242)
+  assert.equal(thrower.penaltyUntil, undefined)
+  stepPark(game, 50, hitAt + stunMs)
+  assert.ok(npc.x > 242)
+  assert.equal(parkView(game, thrower.id, hitAt + stunMs).actors.find(({ id }) => id === npc.id).pose, 'walk')
+})
+
+test('Rock and Smoke recharge independently and keep their deadlines across equipment changes', () => {
+  const game = emptyGame()
+  const [owner, target] = game.players.values()
+  equipParkItem(game, owner.id, rockItem)
+  target.x = 301
+  assert.match(attackInPark(game, owner.id, target.id, 0, rockItem), /100 pixels/)
+  assert.deepEqual(parkView(game, owner.id, 0).itemReadyAt, {})
+  target.x = 280
+  assert.equal(attackInPark(game, owner.id, target.id, 0, rockItem), undefined)
+  const smokeAt = 1000
+  advanceParkCombat(game, smokeAt)
+  equipParkItem(game, owner.id, smokeItem)
+  assert.equal(useSmokeInPark(game, owner.id, smokeAt), undefined)
+  const smokeReadyAt = smokeAt + smokeCooldownMs
+  assert.deepEqual(parkView(game, owner.id, smokeAt).itemReadyAt, {
+    [rockItem]: rockCooldownMs, [smokeItem]: smokeReadyAt,
+  })
+  assert.deepEqual(parkView(game, target.id, smokeAt).itemReadyAt, {})
+  assert.match(useSmokeInPark(game, owner.id, smokeAt + 1), /recharging/)
+  assert.equal(game.smokeClouds.length, 1)
+
+  advanceParkCombat(game, rockCooldownMs - 1)
+  equipParkItem(game, owner.id, rockItem)
+  assert.match(attackInPark(game, owner.id, target.id, rockCooldownMs - 1, rockItem), /recharging/)
+  assert.equal(attackInPark(game, owner.id, target.id, rockCooldownMs, rockItem), undefined)
+  stepPark(game, 0, smokeReadyAt - 1)
+  assert.equal(game.smokeClouds.length, 0)
+  equipParkItem(game, owner.id, smokeItem)
+  assert.match(useSmokeInPark(game, owner.id, smokeReadyAt - 1), /recharging/)
+  assert.equal(useSmokeInPark(game, owner.id, smokeReadyAt), undefined)
+})
+
 test('only the equipped item can be used and a smoke cloud obscures other players for at most ten seconds', () => {
   const game = emptyGame()
   const [owner, victim, observer, remote] = game.players.values()
@@ -120,7 +210,7 @@ test('only the equipped item can be used and a smoke cloud obscures other player
     assert.equal(equipParkItem(game, owner.id, item), undefined)
     assert.equal(parkView(game, owner.id, 0).equippedItem, item)
     assert.match(attackInPark(game, owner.id, victim.id, 0, 'fist'), /Equip/)
-    assert.match(attackInPark(game, owner.id, victim.id, 0), /cannot attack/)
+    if (item === 'smoke') assert.match(attackInPark(game, owner.id, victim.id, 0), /cannot attack/)
   }
   equipParkItem(game, owner.id, 'smoke')
   assert.equal(useSmokeInPark(game, owner.id, 0), undefined)
@@ -132,6 +222,9 @@ test('only the equipped item can be used and a smoke cloud obscures other player
   assert.equal(view(victim).smokeObscured, true)
   assert.equal(view(victim).smokeUntil, view(owner).smokeClouds[0].endsAt)
   assert.deepEqual(view(victim).actors.map(({ id }) => id), [victim.id])
+  assert.equal(view(victim, 6999).smokeOpaque, true)
+  assert.equal(view(victim, 7000).smokeOpaque, false)
+  assert.ok(view(victim, 7000).actors.some(({ id }) => id === owner.id))
   assert.match(attackInPark(game, victim.id, owner.id, 0), /blocking your view/)
 
   setParkInput(victim, { x: 1, y: 0, sprint: false }, 50)

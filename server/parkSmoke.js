@@ -1,5 +1,5 @@
 import { isLiving } from '../shared/combat.js'
-import { smokeDurationMs, smokeHeight, smokeItem, smokeWidth } from '../shared/smoke.js'
+import { smokeCooldownMs, smokeDurationMs, smokeHeight, smokeItem, smokeWidth } from '../shared/smoke.js'
 
 export function smokeObscuredUntil(actor, clouds, now) {
   if (!isLiving(actor)) return 0
@@ -19,6 +19,8 @@ export function useSmokeInPark(game, playerId, now) {
     return 'You cannot use Smoke right now.'
   }
   if (actor.equippedItem !== smokeItem) return 'Equip Smoke first.'
+  if (actor.itemReadyAt[smokeItem] > now) return 'Smoke is recharging.'
+  actor.itemReadyAt[smokeItem] = now + smokeCooldownMs
   game.smokeClouds.push({ x: actor.x, y: actor.y, ownerId: actor.id, area: actor.area,
     startedAt: now, endsAt: now + smokeDurationMs })
 }

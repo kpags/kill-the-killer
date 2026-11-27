@@ -1,8 +1,8 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { areas, gameplayFeedbackMs } from '../shared/park.js'
-import { attackRange, blowgunCooldownMs, blowgunItem, blowgunRange, combatCueFadeMs, killFlashMs,
-  respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
+import { combatCueFadeMs, equippedAttackRange, itemCooldownMs, killFlashMs,
+  poisonBlink, respawnFadeMs, victimCueFadeAt } from '../shared/combat.js'
 import { maxProfile, profileBarSize, profileBars, profileFill } from '../shared/profile.js'
 import killedCueArt from '../assets/animation/killed/sprite_sheet.png'
 import stunnedCueArt from '../assets/animation/stunned/sprite_sheet.png'
@@ -29,12 +29,14 @@ const directions = [
 ]
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const inventorySlots = Object.entries(inventory)
+const inventoryHotkeys = new Map(inventorySlots.map(([item], index) => [`Digit${index + 1}`, item]))
 const inventoryImages = import.meta.glob('../assets/images/inventory/**/*.png', { eager: true, import: 'default', query: '?url' })
 const equippedItem = computed(() => props.state?.equippedItem ?? 'fist')
-const currentAttackRange = computed(() => equippedItem.value === blowgunItem ? blowgunRange(props.state?.area)
-  : equippedItem.value === 'fist' ? attackRange : 0)
-const blowgunCooldownSweep = ref(360)
-const attackOnCooldown = computed(() => equippedItem.value === blowgunItem && blowgunCooldownSweep.value < 360)
+const currentAttackRange = computed(() => equippedAttackRange(equippedItem.value, props.state?.area))
+const cooldowns = Object.entries(itemCooldownMs)
+const cooldownSweeps = reactive(Object.fromEntries(cooldowns.map(([item]) => [item, 360])))
+const cooldownSeconds = reactive({})
+const itemOnCooldown = computed(() => cooldownSweeps[equippedItem.value] < 360)
 const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
@@ -47,6 +49,7 @@ const victimCueElement = ref(null)
 const artReady = ref(false)
 const penaltyActive = ref(false)
 const penaltyStrength = ref(0)
+const poisonEdgeVisible = ref(false)
 const stunnedView = ref(false)
 const smudgeWidth = computed(() => stunnedView.value ? 5.5 : 3.2 * penaltyStrength.value)
 const killerCredit = computed(() => {
@@ -214,11 +217,15 @@ function hoverInventoryItem(key) {
   lastHoveredInventoryItem = key
 }
 
-async function equipInventorySelection() {
+function equipInventorySelection() {
   if (!inventoryOpen.value) return
   const itemId = lastHoveredInventoryItem
   closeInventory()
-  if (itemId === null || itemId === equippedItem.value || activeCommand || props.reconnecting) return
+  if (itemId !== null) equipItem(itemId)
+}
+
+async function equipItem(itemId) {
+  if (itemId === equippedItem.value || activeCommand || props.reconnecting || !canAct.value || !artReady.value) return
   activeCommand = true
   try {
     await props.command('equip_item', { itemId })
@@ -270,7 +277,7 @@ function clearHover() {
 
 async function attack(event) {
   if (event.button !== 0 || !canAct.value || pauseScreen.value || actionsOpen.value || inventoryOpen.value
-    || activeCommand || props.reconnecting || !artReady.value || attackOnCooldown.value) return
+    || activeCommand || props.reconnecting || !artReady.value || itemOnCooldown.value) return
   const itemId = equippedItem.value
   const usingSmoke = itemId === smokeItem
   let actorId
@@ -330,6 +337,12 @@ function keyDown(event) {
     return
   }
   if (actionsOpen.value) return
+  const itemId = inventoryHotkeys.get(event.code)
+  if (itemId && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault()
+    if (!event.repeat) equipItem(itemId)
+    return
+  }
   if (movement.has(event.code)) {
     event.preventDefault()
     if (event.repeat) return
@@ -448,10 +461,16 @@ function render(now) {
     const { faded, head, hoveredId, serverNow, feedbackTop, smokeOpacity = 0,
       penaltyActive: penalized = false, penaltyStrength: strength = 0 } =
       draw(props.state, now, props.playerId, Boolean(label),
-        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || attackOnCooldown.value ? null : pointer,
+        pauseScreen.value || actionsOpen.value || inventoryOpen.value || props.reconnecting || itemOnCooldown.value ? null : pointer,
         false, gameplayNotice.value, currentAttackRange.value)
-    const cooldownFraction = Math.max(0, Math.min(1, ((props.state.blowgunReadyAt ?? serverNow) - serverNow) / blowgunCooldownMs))
-    blowgunCooldownSweep.value = Math.floor((1 - cooldownFraction) * 360)
+    for (const [item, duration] of cooldowns) {
+      const remaining = (props.state.itemReadyAt?.[item] ?? serverNow) - serverNow
+      const fraction = Math.max(0, Math.min(1, remaining / duration))
+      cooldownSweeps[item] = Math.floor((1 - fraction) * 360)
+      cooldownSeconds[item] = Math.max(0, Math.ceil(remaining / 1000))
+    }
+    const self = props.state.actors.find(({ id }) => id === props.playerId)
+    poisonEdgeVisible.value = poisonBlink(self, serverNow, reducedMotion.matches)
     penaltyActive.value = penalized
     penaltyStrength.value = strength
     fadedForeground = faded
@@ -568,8 +587,11 @@ function readState() {
     smokeUntil: props.state?.smokeUntil ?? 0,
     smokeViewOpacity,
     smokeClouds: props.state?.smokeClouds ?? [],
-    blowgunCooldownSweep: blowgunCooldownSweep.value,
+    cooldownSweeps: { ...cooldownSweeps },
+    cooldownSeconds: { ...cooldownSeconds },
+    poisonEdgeVisible: poisonEdgeVisible.value,
     blowgunTraces: props.state?.blowgunTraces ?? [],
+    rockThrows: props.state?.rockThrows ?? [],
     mode: props.state?.mode,
     spot: spot.value?.name ?? null,
     consumption: props.state?.consumption,
@@ -680,8 +702,8 @@ defineExpose({ readState })
         <li v-for="[key, item] in inventorySlots" :key="key" class="park-inventory-slot"
           :aria-current="key === equippedItem ? 'true' : undefined" :title="item.name">
           <img :src="inventoryImages[`../${item.display_image}`]" :alt="item.name" draggable="false" />
-          <span v-if="key === blowgunItem && blowgunCooldownSweep < 360" class="park-inventory-cooldown"
-            :style="{ '--cooldown-sweep': `${blowgunCooldownSweep}deg` }" role="img" aria-label="Recharging"></span>
+          <span v-if="cooldownSweeps[key] < 360" class="park-inventory-cooldown"
+            :style="{ '--cooldown-sweep': `${cooldownSweeps[key]}deg` }" role="img" aria-label="Recharging"></span>
         </li>
       </ol>
 
@@ -742,7 +764,12 @@ defineExpose({ readState })
             class="park-action-slice park-inventory-slice" :style="{ '--turn': `${index * 90}deg` }"
             :aria-describedby="hoveredInventoryItem === key ? 'park-inventory-effect' : undefined"
             @mouseenter="hoverInventoryItem(key)" @mouseleave="hoveredInventoryItem = null">
-            <span>{{ item.name }}</span>
+            <span class="park-inventory-label">
+              {{ item.name }}
+              <small v-if="cooldownSeconds[key] > 0" class="park-inventory-remaining">
+                {{ cooldownSeconds[key] }} seconds cooldown
+              </small>
+            </span>
           </div>
           <h2 id="park-inventory-title" class="park-action-center">Inventory</h2>
         </div>
@@ -785,6 +812,7 @@ defineExpose({ readState })
 
     <div v-if="state?.killFlashAt != null && !reconnecting" :key="state.killFlashAt"
       class="park-kill-flash" :style="{ '--flash-duration': `${killFlashMs}ms` }" aria-hidden="true"></div>
+    <div v-if="poisonEdgeVisible" class="park-poison-edge" aria-hidden="true"></div>
     <div v-if="blackout || state?.respawnedAt != null" ref="respawnCurtain" class="park-blackout" aria-hidden="true"></div>
     <div v-if="state?.victimCue" :key="state.victimCue.startedAt" ref="victimCueElement"
       class="park-victim-cue" :style="{ backgroundImage: `url(${victimCueArt[state.victimCue.kind]})` }">
@@ -1064,7 +1092,7 @@ defineExpose({ readState })
   background: color-mix(in srgb, #171717 calc(var(--penalty-grayscale) * 100%), #101728);
 }
 
-.park-penalized > :not(.park-stage, .park-victim-cue, .park-winner),
+.park-penalized > :not(.park-stage, .park-victim-cue, .park-winner, .park-poison-edge),
 .park-penalized .park-stage > :not(canvas, .park-penalty-status),
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
@@ -1206,13 +1234,21 @@ defineExpose({ readState })
   outline: none;
 }
 
-.park-kill-flash {
+.park-kill-flash,
+.park-poison-edge {
   position: fixed;
   inset: 0;
   z-index: 2;
   pointer-events: none;
+}
+
+.park-kill-flash {
   box-shadow: inset 0 0 clamp(30px, 8vmin, 85px) clamp(10px, 2vmin, 24px) #ed1e35e6;
   animation: park-kill-flash var(--flash-duration) ease-out both;
+}
+
+.park-poison-edge {
+  box-shadow: inset 0 0 clamp(28px, 7vmin, 72px) clamp(5px, 1.3vmin, 14px) #ff203bbf;
 }
 
 .park-victim-cue {
@@ -1465,6 +1501,7 @@ defineExpose({ readState })
 
 .park-inventory-dialog {
   position: relative;
+  container-type: inline-size;
   width: min(20rem, calc(100vw - 24px), calc(100dvh - 9rem));
   margin: 0;
 }
@@ -1477,11 +1514,19 @@ defineExpose({ readState })
   text-align: center;
 }
 
-.park-inventory-slice span {
+.park-inventory-slice > .park-inventory-label {
   top: 14%;
-  width: min(48%, 6rem);
-  font-size: clamp(0.75rem, 3.7vmin, 1rem);
+  width: min(30%, 6rem);
+  font-size: clamp(0.625rem, 5cqw, 1rem);
   line-height: 1.1;
+}
+
+.park-inventory-remaining {
+  display: block;
+  margin-top: 3px;
+  font-size: clamp(0.5rem, 3.75cqw, 0.75rem);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 .park-inventory-dialog h2 {
@@ -1489,7 +1534,7 @@ defineExpose({ readState })
   display: grid;
   place-items: center;
   margin: 0;
-  font-size: clamp(0.875rem, 4vmin, 1.125rem);
+  font-size: clamp(0.6875rem, 5.625cqw, 1.125rem);
   cursor: default;
 }
 

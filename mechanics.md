@@ -79,6 +79,10 @@ A successful nonlethal punch or stun immediately deducts 10 Profile points from 
 | Movement | `Left Shift` | Sprint |
 | Interactions | `E` | Interact or hide |
 | Interactions | `F` | Toggle the Actions wheel |
+| Inventory | `1` | Equip Fist |
+| Inventory | `2` | Equip Poisoned Blowgun |
+| Inventory | `3` | Equip Smoke |
+| Inventory | `4` | Equip Rock |
 | Mouse | Mouse movement | Move the pointer |
 | Mouse | Left click | Use the equipped item |
 | Mouse | Hold right click | Open the Inventory wheel and hover a section to see its effect. Release to equip the last hovered item. |
@@ -161,8 +165,10 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 
 ### Implemented Park combat
 
-- Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. On impact, the target plays `head_hit.gif`, blinks red, moves at half speed for three seconds, then dies. The 60-second cooldown starts when the shot is used. Its inventory slot greys out and clears clockwise as it recharges.
-- Equip **Smoke** and click to deploy a 200 × 200 map-pixel cloud with the bottom of its animation aligned to your feet at deployment. It lasts 10 seconds from use. The first clip plays once at 20 ms per frame, the second loops at double speed until seven seconds have elapsed, and the third starts at seven seconds and holds its final frame until the smoke clears. Other players' views fade into haze on entry and clear when they leave or the cloud expires. Re-entering uses the original cloud deadline. The player who deployed the cloud keeps their normal view.
+- Equip **Poisoned Blowgun** from the Inventory wheel and click a visible model within 85% of the current area's width. The shooter turns toward the target, plays `blowgun.gif`, and fires a visible trace. On impact, the target plays `head_hit.gif`, blinks red, moves at half speed for three seconds, then dies. A poisoned player's screen edges blink red in sync with their model. Reduced motion uses a steady red edge and tint.
+- Equip **Smoke** and click to deploy a 200 × 200 map-pixel cloud with the bottom of its animation aligned to your feet at deployment. It lasts 10 seconds from use. The first clip plays once at 20 ms per frame, the second loops at double speed until seven seconds have elapsed, and the third starts at seven seconds and holds its final frame until the smoke clears. Other players' views fade into haze on entry and clear when they leave. Inside the cloud, their views gradually clear across its final three seconds. Re-entering uses the original cloud deadline. The player who deployed the cloud keeps their normal view.
+- Equip **Rock** and click a visible player or NPC within 100 map pixels. The thrower faces the target and plays `throw.gif` as a 30 × 30 map-pixel `rock_used.gif` travels to the target. On impact the target plays `stun.gif` and cannot move for three seconds.
+- Using **Poisoned Blowgun**, **Smoke**, or **Rock** starts a cooldown of 60, 15, or 10 seconds respectively. Each inventory slot greys out and clears clockwise as its item recharges, including while another item is equipped. The Inventory wheel shows the remaining seconds below the item's name until it is ready.
 
 - With **Fist** equipped, hover over a visible, living model within 20 map pixels of the player's ground position to pulse its color to `#910123`. The pulse continues as the model animates while the pointer stays within its pose silhouette. The distance does not change with screen size, camera zoom, or model scale. Reduced motion uses a steady tint. Click or tap the opaque part of the frontmost model to attack.
 - NPCs, assigned targets, and any seated player can be killed. Range for seated models uses the nearest walkable point to their seat. The attacker plays the updated `kill.gif` once at 1.3× speed (about 208ms). The victim plays `death.gif` once at 1.3× speed (about 346ms) in the direction they were facing when hit. The corpse then fades out over two seconds. A lethal attack also takes priority when both players have each other as targets.
@@ -184,6 +190,12 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-27 — Added live cooldown labels in the Inventory wheel and number keys `1`–`4` to equip the four slots.
+
+- 2026-11-27 — Added a red screen-edge pulse for poisoned players and clockwise cooldown wipes for Rock and Smoke.
+
+- 2026-11-27 — Added a three-second smoke POV fade at the end of the cloud and the Rock throw with a three-second stun.
 
 - 2026-11-26 — Added smoke view fades on entry and exit, shared the cloud deadline with affected players, and set the opening clip to 20 ms per frame.
 

@@ -1,6 +1,7 @@
 import inventory from '../data/inventory.json' with { type: 'json' }
 
 export const smokeItem = 'smoke'
+export const smokeCooldownMs = 15_000
 export const smokeDurationMs = 10_000
 export const smokeFadeMs = 3000
 export const smokeViewTransitionMs = 300

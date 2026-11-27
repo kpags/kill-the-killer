@@ -31,6 +31,7 @@ POSES = {
     "drink": (("drink.gif",), 120),
     "blowgun": (("blowgun.gif",), 120),
     "head-hit": (("head_hit.gif",), 120),
+    "throw": (("throw.gif",), 120),
     "kill": (("kill.gif",), 120),
     "punch": (("punch.gif",), 120),
     "death": (("death.gif",), 120),
@@ -136,7 +137,7 @@ def actor_atlas(color, pose, sources, body_height):
                 frames.append(actor_frame(frame, preserve_details=preserve_details, consumable=consumable))
     bounds = [frame.getchannel("A").getbbox() for frame in frames]
     original_bounds = bounds
-    combat = pose in {"kill", "punch", "death", "pre-stun", "stun"}
+    combat = pose in {"kill", "punch", "death", "pre-stun", "stun", "throw"}
     fixed_crop = combat or consumable or pose in {"phone-one", "blowgun", "head-hit"}
     if fixed_crop:
         # A common crop preserves the sprite's origin across frames.
@@ -200,13 +201,29 @@ def smoke_atlases():
         yield name, atlas(name, frames, durations)
 
 
+def rock_atlas():
+    source = ASSETS / "images" / "inventory" / "utilities" / "gif" / "rock_used.gif"
+    frames = []
+    durations = []
+    with Image.open(source) as image:
+        for frame in ImageSequence.Iterator(image):
+            durations.append(frame.info.get("duration", 30))
+            rock = frame.convert("RGBA").crop((4, 4, image.width - 4, image.height - 4))
+            rock = rock.resize((128, 128), Image.Resampling.LANCZOS)
+            mask = rock.convert("L").point(lambda value: 255 if value > 28 else 0)
+            rock.putalpha(fill_cutouts(mask).filter(ImageFilter.GaussianBlur(0.45)))
+            frames.append(rock)
+    return atlas("rock-projectile", frames, durations)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--poses", nargs="+", choices=POSES, help="Update only these actor poses in existing atlases")
     parser.add_argument("--smoke", action="store_true", help="Update the smoke atlases in the existing manifest")
+    parser.add_argument("--rock", action="store_true", help="Update the rock projectile atlas in the existing manifest")
     args = parser.parse_args()
     OUTPUT.mkdir(exist_ok=True)
-    incremental = args.poses or args.smoke
+    incremental = args.poses or args.smoke or args.rock
     metadata = json.loads((OUTPUT / "atlases.json").read_text(encoding="utf-8")) if incremental else {
         folder.name: scene_atlas(folder)
         for folder in sorted((ASSETS / "maps" / "park").iterdir())
@@ -219,6 +236,8 @@ def main():
             metadata[f"{color}-{pose}"] = actor_atlas(color, pose, sources, body_height)
     if args.smoke or not incremental:
         metadata.update(smoke_atlases())
+    if args.rock or not incremental:
+        metadata["rock-projectile"] = rock_atlas()
     (OUTPUT / "atlases.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 

@@ -1,5 +1,6 @@
 import atlases from '../assets/gameplay/atlases.json' with { type: 'json' }
 import { areas, constrain } from './park.js'
+import { smokeCooldownMs, smokeItem } from './smoke.js'
 
 export const attackRange = 20
 export const blowgunItem = 'poison_blowgun'
@@ -8,6 +9,17 @@ export const blowgunCooldownMs = 60_000
 export const blowgunWindupMs = 250
 export const blowgunFlightMs = 120
 export const blowgunTraceFadeMs = 100
+export const rockItem = 'Rock'
+export const rockCooldownMs = 10_000
+export const itemCooldownMs = {
+  [blowgunItem]: blowgunCooldownMs,
+  [rockItem]: rockCooldownMs,
+  [smokeItem]: smokeCooldownMs,
+}
+export const rockRange = 100
+export const rockWindupMs = 200
+export const rockFlightMs = 270
+export const rockSize = 30
 export const poisonMs = 3000
 export const poisonSpeedFactor = 0.5
 export const deathFadeMs = 2000
@@ -16,7 +28,7 @@ export const stunMs = 3000
 export const targetSearchMs = 3000
 export const winnerDisplayMs = 3000
 export const screamPoses = ['scream-one', 'scream-two', 'scream-three']
-export const oneShotPoses = new Set(['kill', 'punch', 'death', 'pre-stun', 'consume', 'drink', 'blowgun', 'head-hit'])
+export const oneShotPoses = new Set(['kill', 'punch', 'death', 'pre-stun', 'consume', 'drink', 'blowgun', 'head-hit', 'throw'])
 export const killFlashMs = 420
 export const combatFeedbackMs = 1200
 export const npcPenaltyMs = 10_000
@@ -51,6 +63,21 @@ export function animationDuration(color, pose) {
 
 export function isLiving(actor) {
   return Boolean(actor) && (!actor.life || actor.life === 'alive')
+}
+
+export function isRockStunned(actor, now) {
+  return actor.rockStunnedUntil > now
+}
+
+export function poisonBlink(actor, now, reducedMotion) {
+  return Boolean(actor?.poisonedUntil > now
+    && (reducedMotion || Math.floor((now - actor.poisonedAt) / 200) % 2 === 0))
+}
+
+export function equippedAttackRange(item, area) {
+  if (item === 'fist') return attackRange
+  if (item === blowgunItem) return blowgunRange(area)
+  return item === rockItem ? rockRange : 0
 }
 
 export function inAttackRange(actor, other, range = attackRange) {

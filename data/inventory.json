@@ -33,8 +33,7 @@
     "Rock": {
         "name": "Rock",
         "effect": "Stuns the target for 3 seconds when hit.",
-        "width": "200px",
-        "height": "200px",
+        "max_distance": "100px",
         "type": {
             "main": "utilities",
             "sub": "throwable"

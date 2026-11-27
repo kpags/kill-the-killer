@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { areas, colors, constrain, groundRange, sprintSpeed, walkSpeed } from '../shared/park.js'
 import { claimSeat } from './parkSeats.js'
-import { animationDuration, isLiving, poisonSpeedFactor, screamPoses } from '../shared/combat.js'
+import { animationDuration, isLiving, isRockStunned, poisonSpeedFactor, screamPoses } from '../shared/combat.js'
 import { queueParkSound } from './parkSounds.js'
 
 const phonePoses = ['phone-one', 'phone-two', 'phone-three']
@@ -144,7 +144,8 @@ function scheduleFoodVisits(game, now) {
     const stores = area.spots.filter((spot) => spot.consumptionPose === 'consume' && foodStoreAvailable(game, areaIndex, spot.id))
     if (!stores.length) continue
     const candidates = [...game.npcs.values()].filter((actor) => actor.area === areaIndex && isLiving(actor)
-      && !actor.arrival && !actor.foodVisit && (actor.pose === 'walk' || actor.pose === 'talk' || phonePoses.includes(actor.pose)))
+      && !actor.arrival && !actor.foodVisit && !isRockStunned(actor, now)
+      && (actor.pose === 'walk' || actor.pose === 'talk' || phonePoses.includes(actor.pose)))
     if (!candidates.length || game.random() >= 0.1) continue
 
     const actor = pick(candidates, game.random)
@@ -283,7 +284,7 @@ function stepPanic(game, areaIndex, panic, elapsedMs, now) {
   let fleeing = false
   for (const actor of game.npcs.values()) {
     if (actor.area !== areaIndex || actor.mode !== 'panic' || !isLiving(actor)) continue
-    if (now < actor.screamEndsAt) {
+    if (now < actor.screamEndsAt || isRockStunned(actor, now)) {
       fleeing = true
       continue
     }
@@ -336,7 +337,7 @@ export function stepParkNpcs(game, elapsedMs, now) {
   scheduleFoodVisits(game, now)
   const distance = walkSpeed * elapsedMs / 1000
   for (const actor of game.npcs.values()) {
-    if (!actor.arrival || !isLiving(actor)) continue
+    if (!actor.arrival || !isLiving(actor) || isRockStunned(actor, now)) continue
     if (!walkTo(actor, areas[actor.area], actor.arrival, distance)) continue
     actor.arrival = null
     updateConversation(game, actor.crowd.group)
@@ -348,7 +349,7 @@ export function stepParkNpcs(game, elapsedMs, now) {
       if (now >= slot.respawnAt) spawnWalker(game, slot, -slot.direction)
       continue
     }
-    if (!isLiving(actor) || actor.foodVisit) continue
+    if (!isLiving(actor) || actor.foodVisit || isRockStunned(actor, now)) continue
     const area = areas[slot.area]
     if (slot.resumeAt !== null) {
       if (now < slot.resumeAt) continue
@@ -373,6 +374,6 @@ export function stepParkNpcs(game, elapsedMs, now) {
     }
   }
   for (const actor of game.npcs.values()) {
-    if (actor.foodVisit && isLiving(actor)) stepFoodVisit(game, actor, distance, now)
+    if (actor.foodVisit && isLiving(actor) && !isRockStunned(actor, now)) stepFoodVisit(game, actor, distance, now)
   }
 }

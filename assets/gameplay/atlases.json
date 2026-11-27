@@ -2872,5 +2872,117 @@
       150,
       150
     ]
+  },
+  "blue-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "green-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "orange-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "purple-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "red-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "yellow-throw": {
+    "width": 160,
+    "height": 136,
+    "columns": 4,
+    "durations": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ]
+  },
+  "rock-projectile": {
+    "width": 128,
+    "height": 128,
+    "columns": 4,
+    "durations": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ]
   }
 }

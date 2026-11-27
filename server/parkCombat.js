@@ -1,7 +1,8 @@
 import { areas, constrain, randomGroundPoint } from '../shared/park.js'
-import { animationDuration, attackRange, blowgunCooldownMs, blowgunFlightMs, blowgunItem, blowgunRange,
-  blowgunTraceFadeMs, blowgunWindupMs, combatFeedbackDuration, deathFadeMs, inAttackRange, isLiving,
-  npcPenaltyMs, penaltyNoticeLimit, poisonMs, respawnDelayMs, stunMs, targetSearchMs, victimCueEndsAt } from '../shared/combat.js'
+import { animationDuration, blowgunFlightMs, blowgunItem,
+  blowgunTraceFadeMs, blowgunWindupMs, combatFeedbackDuration, deathFadeMs, equippedAttackRange, inAttackRange, isLiving,
+  isRockStunned, itemCooldownMs, npcPenaltyMs, penaltyNoticeLimit, poisonMs, respawnDelayMs, rockFlightMs, rockItem, rockWindupMs,
+  stunMs, targetSearchMs, victimCueEndsAt } from '../shared/combat.js'
 import { adjustProfile, hideTransitionMs, profileBarSize, profileKillAward } from '../shared/profile.js'
 import { queueNpcPanic } from './parkNpcs.js'
 import { queueParkSound, setPenaltySound } from './parkSounds.js'
@@ -133,34 +134,63 @@ function killModel(game, victim, { actor, isTarget, killerName, showCue }, now) 
   refreshParkTargets(game, now)
 }
 
-function fireBlowgun(game, actor, victim, isTarget, now) {
-  const startedAt = now + blowgunWindupMs
+function fireProjectile(game, actor, victim, isTarget, now) {
+  const itemId = actor.equippedItem
+  const throwingRock = itemId === rockItem
+  const startedAt = now + (throwingRock ? rockWindupMs : blowgunWindupMs)
   actor.facing = Math.sign(victim.x - actor.x) || actor.facing
-  game.blowgunShots.push({
-    area: actor.area, attackerId: actor.id, killerName: actor.name, isTarget,
+  game.projectiles.push({
+    itemId, area: actor.area, attackerId: actor.id, killerName: actor.name, isTarget,
     victimId: victim.id, generation: victim.generation ?? 0,
     from: { x: actor.x, y: actor.y, facing: actor.facing }, to: { x: victim.x, y: victim.y },
-    startedAt, hitAt: startedAt + blowgunFlightMs,
+    startedAt, hitAt: startedAt + (throwingRock ? rockFlightMs : blowgunFlightMs),
   })
-  actor.blowgunReadyAt = now + blowgunCooldownMs
-  beginCombat(actor, 'blowgun', now)
+  actor.itemReadyAt[itemId] = now + itemCooldownMs[itemId]
+  beginCombat(actor, throwingRock ? 'throw' : 'blowgun', now)
 }
 
-function advanceBlowgun(game, now) {
-  if (game.winner) game.blowgunShots.length = 0
-  game.blowgunShots = game.blowgunShots.filter((shot) => {
-    if (shot.resolved) return now < shot.hitAt + blowgunTraceFadeMs
+function recordPlayerStun(game, actor, victim, now, defensive) {
+  addCombatFeedback(actor, 'stun', 'Stunned', now)
+  adjustProfile(actor, -10)
+  if (defensive && game.modeId === 'Hitman') {
+    const hasAlternative = [...game.players.values()].some((other) => isLiving(other) && other !== victim && other !== actor)
+    if (hasAlternative) startTargetSearch(game, victim, now, actor.id)
+  }
+}
+
+function stunWithRock(game, shot, victim) {
+  const { hitAt, attackerId } = shot
+  const endsAt = hitAt + stunMs
+  if (isRockStunned(victim, hitAt) || (victim.pose === 'stun' && victim.combat?.endsAt > hitAt)) return
+  const source = game.players.get(attackerId)
+  if (game.npcs.has(victim.id)) {
+    victim.rockStunnedUntil = endsAt
+    if (source) addCombatFeedback(source, 'stun', 'Stunned', hitAt)
+  } else {
+    beginCombat(victim, 'stun', hitAt, { endsAt })
+    if (!victim.isBot) victim.victimCue = { kind: 'stunned', startedAt: hitAt, holdUntil: endsAt }
+    if (source) recordPlayerStun(game, source, victim, hitAt, game.targets.get(victim.id) === attackerId)
+  }
+  queueParkSound(game, victim.area, 'full-stun')
+}
+
+function advanceProjectiles(game, now) {
+  if (game.winner) game.projectiles.length = 0
+  game.projectiles = game.projectiles.filter((shot) => {
+    const keepUntil = shot.hitAt + (shot.itemId === blowgunItem ? blowgunTraceFadeMs : 0)
+    if (shot.resolved) return now < keepUntil
     const victim = game.players.get(shot.victimId) ?? game.npcs.get(shot.victimId)
     const targetInArea = isLiving(victim) && victim.area === shot.area && (victim.generation ?? 0) === shot.generation
     if (targetInArea && victim.mode !== 'hide') shot.to = { x: victim.x, y: victim.y }
     if (now >= shot.hitAt) {
       shot.resolved = true
-      if (targetInArea && !victim.poison) {
+      if (targetInArea && shot.itemId === rockItem) stunWithRock(game, shot, victim)
+      else if (targetInArea && !victim.poison) {
         victim.poison = { attackerId: shot.attackerId, killerName: shot.killerName, isTarget: shot.isTarget,
           hitAt: shot.hitAt, endsAt: shot.hitAt + poisonMs }
       }
     }
-    return now < shot.hitAt + blowgunTraceFadeMs
+    return now < keepUntil
   })
 
   const actors = [...game.players.values(), ...game.npcs.values()]
@@ -191,23 +221,23 @@ export function attackInPark(game, playerId, actorId, now, itemId) {
   if (game.winner) return 'The match has ended.'
   if (actor.combat || actor.mode === 'consume') return 'Wait for your current action to finish.'
   if (itemId !== undefined && itemId !== actor.equippedItem) return 'Equip that item first.'
-  if (actor.equippedItem !== 'fist' && actor.equippedItem !== blowgunItem) return 'That item cannot attack.'
+  const range = equippedAttackRange(actor.equippedItem, actor.area)
+  if (!range) return 'That item cannot attack.'
   if (smokeObscuredUntil(actor, game.smokeClouds, now) > now) return 'The smoke is blocking your view.'
+  if (actor.itemReadyAt[actor.equippedItem] > now) return `The ${inventory[actor.equippedItem].name} is recharging.`
   const usingBlowgun = actor.equippedItem === blowgunItem
-  if (usingBlowgun && actor.blowgunReadyAt > now) return 'The Poisoned Blowgun is recharging.'
   const victim = typeof actorId === 'string' && (game.players.get(actorId) ?? game.npcs.get(actorId))
   if (!isLiving(victim) || victim === actor || victim.mode === 'hide' || victim.area !== actor.area) {
     return 'That model is unavailable.'
   }
-  const range = usingBlowgun ? blowgunRange(actor.area) : attackRange
   if (!inAttackRange(actor, victim, range)) return `Move within ${range} pixels of that model.`
 
   refreshParkTargets(game, now)
   const isNpc = game.npcs.has(actorId)
   const isTarget = game.targets.get(actor.id) === victim.id
-  if (usingBlowgun) {
-    if (victim.poison) return 'That model is already poisoned.'
-    fireBlowgun(game, actor, victim, isTarget, now)
+  if (usingBlowgun || actor.equippedItem === rockItem) {
+    if (usingBlowgun && victim.poison) return 'That model is already poisoned.'
+    fireProjectile(game, actor, victim, isTarget, now)
     return
   }
   const lastManStanding = game.modeId === 'last_man_standing'
@@ -227,12 +257,7 @@ export function attackInPark(game, playerId, actorId, now, itemId) {
       victim.victimCue = { kind: 'stunned', startedAt: now }
       if (defensiveStun) victim.victimCue.holdUntil = victim.combat.endsAt + stunMs
     }
-    addCombatFeedback(actor, 'stun', 'Stunned', now)
-    adjustProfile(actor, -10)
-    if (defensiveStun && game.modeId === 'Hitman') {
-      const hasAlternative = [...game.players.values()].some((other) => isLiving(other) && other !== victim && other !== actor)
-      if (hasAlternative) startTargetSearch(game, victim, now, actor.id)
-    }
+    recordPlayerStun(game, actor, victim, now, defensiveStun)
   }
 }
 
@@ -248,7 +273,7 @@ function respawn(game, actor, now) {
 }
 
 export function advanceParkCombat(game, now) {
-  advanceBlowgun(game, now)
+  advanceProjectiles(game, now)
   const respawned = []
   for (const actor of [...game.players.values(), ...game.npcs.values()]) {
     const waitingToSpectate = actor.respawnAt === null
