@@ -154,6 +154,7 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - Buttons on Home, Home Settings, and Room play hover and click sounds after the first menu interaction. Menu music continuously shuffles the three tracks and follows the Music slider. It pauses in Park and resumes when the player returns to a menu.
 - Playground shuffles and loops its own music through the **Music** slider. Music starts fresh on each visit, continues during the pause menu, and stops when the player leaves Playground. Spectators hear the music of the area they watch.
 - Each Park area shuffles and repeats its `sounds` clips while you are there. Ambience plays at 15% volume and follows the SFX slider when it is set lower. It pauses for the penalized player until their NPC penalty expires. When NPCs react to a kill, it pauses for everyone in that area until the NPCs begin returning. In Fireworks, the launch and burst frames follow each recording's explosion cues.
+- When the winner appears, one random track from `musics/in_game/victory` plays once at the player's **Music** volume. The track can finish on Home before menu music resumes.
 
 ### Basketball Shooting
 
@@ -213,6 +214,8 @@ Food Stalls uses the map key `food_stalls` and the asset folder `2_food_stalls`.
 - The eight-minute timer and combat stamina deductions remain pending.
 
 ## Change log
+
+- 2026-11-27 — Added a one-time victory track when the winner appears.
 
 - 2026-11-27 — Added shuffled ambience in all six Park areas, with pauses for local penalties and crowd reactions. Timed the Fireworks animation to its sound cues.
 

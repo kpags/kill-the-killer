@@ -10,6 +10,8 @@ import thirdTrack from '../assets/musics/menu/three.mp3'
 
 const playgroundTracks = Object.values(import.meta.glob('../assets/maps/park/4_playground/musics/*.mp3',
   { eager: true, import: 'default', query: '?url' }))
+const victoryTracks = Object.values(import.meta.glob('../assets/musics/in_game/victory/*.mp3',
+  { eager: true, import: 'default', query: '?url' }))
 const ambienceAssets = import.meta.glob('../assets/maps/park/*/sounds/*.{mp3,ogg,wav,m4a}',
   { eager: true, import: 'default', query: '?url' })
 const ambienceTracks = new Map()
@@ -71,8 +73,9 @@ function takeNextTrack(playlist) {
 
 export function useGameAudio(settings, menuActive, park) {
   const parkArea = computed(() => menuActive.value ? null : park.value?.area)
+  const winnerVisible = computed(() => !menuActive.value && Boolean(park.value?.winner))
   const inSmoke = computed(() => !menuActive.value && Boolean(park.value?.smokeObscured))
-  const ambienceSilenced = computed(() => Boolean(park.value?.penaltyUntil || park.value?.crowdReacting))
+  const ambienceSilenced = computed(() => winnerVisible.value || Boolean(park.value?.penaltyUntil || park.value?.crowdReacting))
   const click = new Audio(clickUrl)
   const hover = new Audio(hoverUrl)
   const smokeAffected = new Audio(smokeAffectedUrl)
@@ -80,6 +83,7 @@ export function useGameAudio(settings, menuActive, park) {
   const ambience = new Audio()
   const menu = { tracks: [firstTrack, secondTrack, thirdTrack], queue: [], current: null, time: 0 }
   const playground = { tracks: playgroundTracks, queue: [], current: null, time: 0 }
+  const victory = { current: null, time: 0 }
   const effectBuffers = new Map()
   const activeEffects = new Set()
   const fallbackEffects = new Set()
@@ -132,7 +136,17 @@ export function useGameAudio(settings, menuActive, park) {
   }
 
   function playMusic() {
-    if (playlist && activated && music.paused) music.play().catch(() => {})
+    if (playlist && activated && music.paused && !music.ended) music.play().catch(() => {})
+  }
+
+  function musicEnded() {
+    if (!music.ended) return
+    if (playlist === victory) {
+      victory.current = null
+      selectPlaylist()
+    } else {
+      startNextTrack()
+    }
   }
 
   function syncAmbience() {
@@ -172,7 +186,8 @@ export function useGameAudio(settings, menuActive, park) {
     stopCombatSounds()
     if (!menuActive.value) preloadCombatSounds()
     const inPlayground = areas[parkArea.value]?.id === 'playground' && playground.tracks.length > 0
-    const next = menuActive.value ? menu : inPlayground ? playground : null
+    const background = menuActive.value ? menu : inPlayground && !winnerVisible.value ? playground : null
+    const next = victory.current ? victory : background
     if (next === playlist) return
     if (playlist === menu) {
       hover.pause()
@@ -184,13 +199,23 @@ export function useGameAudio(settings, menuActive, park) {
     }
     music.pause()
     playlist = next
-    if (activated && playlist) {
-      if (playlist.current) loadTrack()
-      else startNextTrack()
+    if (playlist?.current) {
+      loadTrack()
+    } else if (activated && playlist) {
+      startNextTrack()
     } else if (music.hasAttribute('src')) {
       music.removeAttribute('src')
       music.load()
     }
+  }
+
+  function syncPlaylist([inMenu, , showingWinner], [wasInMenu, , wasShowingWinner]) {
+    // Let the cue finish on Home, and clear it when a new match begins.
+    if (inMenu !== wasInMenu && (!inMenu || !activated)) victory.current = null
+    if (showingWinner && !wasShowingWinner && victoryTracks.length) {
+      victory.current = victoryTracks[Math.floor(Math.random() * victoryTracks.length)]
+    }
+    selectPlaylist()
   }
 
   function loadEffectBuffer(url) {
@@ -370,13 +395,13 @@ export function useGameAudio(settings, menuActive, park) {
   }
 
   watch(settings, () => { if (activated) setVolume() }, { flush: 'sync' })
-  watch([menuActive, parkArea], selectPlaylist, { immediate: true, flush: 'sync' })
+  watch([menuActive, parkArea, winnerVisible], syncPlaylist, { immediate: true, flush: 'sync' })
   watch([menuActive, park], syncPenaltySounds, { flush: 'sync' })
   watch(inSmoke, syncSmokeSound, { flush: 'sync' })
   watch([parkArea, ambienceSilenced], syncAmbience, { flush: 'sync' })
 
   onMounted(() => {
-    music.addEventListener('ended', startNextTrack)
+    music.addEventListener('ended', musicEnded)
     ambience.addEventListener('ended', syncAmbience)
     document.addEventListener('pointerdown', activate, true)
     document.addEventListener('keydown', activate, true)
@@ -385,7 +410,7 @@ export function useGameAudio(settings, menuActive, park) {
   })
 
   onUnmounted(() => {
-    music.removeEventListener('ended', startNextTrack)
+    music.removeEventListener('ended', musicEnded)
     ambience.removeEventListener('ended', syncAmbience)
     document.removeEventListener('pointerdown', activate, true)
     document.removeEventListener('keydown', activate, true)
