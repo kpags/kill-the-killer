@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { areas } from '../shared/park.js'
 import { npcPenaltyMs } from '../shared/combat.js'
+import { fireworksSceneTime } from './parkFireworks.js'
 import clickUrl from '../assets/sounds/menu/buttons/click.mp3'
 import hoverUrl from '../assets/sounds/menu/buttons/hover.mp3'
 import firstTrack from '../assets/musics/menu/one.mp3'
@@ -9,6 +10,17 @@ import thirdTrack from '../assets/musics/menu/three.mp3'
 
 const playgroundTracks = Object.values(import.meta.glob('../assets/maps/park/4_playground/musics/*.mp3',
   { eager: true, import: 'default', query: '?url' }))
+const ambienceAssets = import.meta.glob('../assets/maps/park/*/sounds/*.{mp3,ogg,wav,m4a}',
+  { eager: true, import: 'default', query: '?url' })
+const ambienceTracks = new Map()
+const fireworksClips = new Map()
+for (const [path, url] of Object.entries(ambienceAssets)) {
+  const [area, , filename] = path.split('/').slice(-3)
+  if (!ambienceTracks.has(area)) ambienceTracks.set(area, [])
+  ambienceTracks.get(area).push(url)
+  if (area === '5_fireworks') fireworksClips.set(url, filename)
+}
+const ambienceVolume = 0.15
 const combatAssets = import.meta.glob('../assets/sounds/in_game/**/*.mp3',
   { eager: true, import: 'default', query: '?url' })
 const smokeAffectedUrl = combatAssets['../assets/sounds/in_game/items/smoke/affected.mp3']
@@ -49,13 +61,23 @@ function effectRate(duration, maxDurationMs) {
   return maxDurationMs && Number.isFinite(duration) ? Math.max(1, duration * 1000 / maxDurationMs) : 1
 }
 
+function takeNextTrack(playlist) {
+  if (!playlist.queue.length) playlist.queue = [...playlist.tracks]
+  const choices = playlist.queue.length > 1 ? playlist.queue.filter((track) => track !== playlist.current) : playlist.queue
+  playlist.current = choices[Math.floor(Math.random() * choices.length)]
+  playlist.queue.splice(playlist.queue.indexOf(playlist.current), 1)
+  return playlist.current
+}
+
 export function useGameAudio(settings, menuActive, park) {
   const parkArea = computed(() => menuActive.value ? null : park.value?.area)
   const inSmoke = computed(() => !menuActive.value && Boolean(park.value?.smokeObscured))
+  const ambienceSilenced = computed(() => Boolean(park.value?.penaltyUntil || park.value?.crowdReacting))
   const click = new Audio(clickUrl)
   const hover = new Audio(hoverUrl)
   const smokeAffected = new Audio(smokeAffectedUrl)
   const music = new Audio()
+  const ambience = new Audio()
   const menu = { tracks: [firstTrack, secondTrack, thirdTrack], queue: [], current: null, time: 0 }
   const playground = { tracks: playgroundTracks, queue: [], current: null, time: 0 }
   const effectBuffers = new Map()
@@ -69,20 +91,26 @@ export function useGameAudio(settings, menuActive, park) {
   let context
   let musicGain
   let effectsGain
+  let ambienceGain
   let activated = false
   let playlist
+  let ambienceArea
+  let ambiencePlaylist
   let audioScope = 0
 
   function setVolume() {
     const { sfx, music: musicLevel } = settings.value
+    const areaLevel = Math.min(ambienceVolume, sfx / 100)
     if (context) {
       effectsGain.gain.value = sfx / 100
       musicGain.gain.value = musicLevel / 100
+      ambienceGain.gain.value = areaLevel
     } else {
       click.volume = sfx / 100
       hover.volume = sfx / 100
       smokeAffected.volume = sfx / 100
       music.volume = musicLevel / 100
+      ambience.volume = areaLevel
       for (const clip of fallbackEffects) clip.volume = sfx / 100
       for (const { clip } of penaltyEffects.values()) {
         if (clip) clip.volume = sfx / 100
@@ -92,10 +120,7 @@ export function useGameAudio(settings, menuActive, park) {
 
   function startNextTrack() {
     if (!playlist) return
-    if (!playlist.queue.length) playlist.queue = [...playlist.tracks]
-    const choices = playlist.queue.length > 1 ? playlist.queue.filter((track) => track !== playlist.current) : playlist.queue
-    playlist.current = choices[Math.floor(Math.random() * choices.length)]
-    playlist.queue.splice(playlist.queue.indexOf(playlist.current), 1)
+    takeNextTrack(playlist)
     playlist.time = 0
     loadTrack()
   }
@@ -108,6 +133,31 @@ export function useGameAudio(settings, menuActive, park) {
 
   function playMusic() {
     if (playlist && activated && music.paused) music.play().catch(() => {})
+  }
+
+  function syncAmbience() {
+    const area = areas[parkArea.value]?.art
+    if (area !== ambienceArea) {
+      ambience.pause()
+      if (ambience.hasAttribute('src')) {
+        ambience.removeAttribute('src')
+        ambience.load()
+      }
+      const tracks = ambienceTracks.get(area)
+      ambiencePlaylist = tracks && { tracks, queue: [], current: null }
+      ambienceArea = area
+    }
+    if (!activated || !ambiencePlaylist || ambienceSilenced.value) {
+      ambience.pause()
+      return
+    }
+    if (!ambiencePlaylist.current || ambience.ended) ambience.src = takeNextTrack(ambiencePlaylist)
+    if (ambience.paused) ambience.play().catch(() => {})
+  }
+
+  function getFireworksSceneTime() {
+    const clip = fireworksClips.get(ambiencePlaylist?.current)
+    return clip && !ambience.paused ? fireworksSceneTime(clip, ambience.currentTime * 1000) : null
   }
 
   function stopCombatSounds() {
@@ -278,12 +328,15 @@ export function useGameAudio(settings, menuActive, park) {
       context = new AudioContext()
       effectsGain = context.createGain()
       musicGain = context.createGain()
+      ambienceGain = context.createGain()
       effectsGain.connect(context.destination)
       musicGain.connect(context.destination)
+      ambienceGain.connect(context.destination)
       context.createMediaElementSource(click).connect(effectsGain)
       context.createMediaElementSource(hover).connect(effectsGain)
       context.createMediaElementSource(smokeAffected).connect(effectsGain)
       context.createMediaElementSource(music).connect(musicGain)
+      context.createMediaElementSource(ambience).connect(ambienceGain)
     }
     if (!activated) {
       setVolume()
@@ -293,6 +346,7 @@ export function useGameAudio(settings, menuActive, park) {
     }
     if (context && context.state !== 'running') context.resume().catch(() => {})
     syncSmokeSound()
+    syncAmbience()
     if (playlist?.current) playMusic()
     else startNextTrack()
   }
@@ -319,9 +373,11 @@ export function useGameAudio(settings, menuActive, park) {
   watch([menuActive, parkArea], selectPlaylist, { immediate: true, flush: 'sync' })
   watch([menuActive, park], syncPenaltySounds, { flush: 'sync' })
   watch(inSmoke, syncSmokeSound, { flush: 'sync' })
+  watch([parkArea, ambienceSilenced], syncAmbience, { flush: 'sync' })
 
   onMounted(() => {
     music.addEventListener('ended', startNextTrack)
+    ambience.addEventListener('ended', syncAmbience)
     document.addEventListener('pointerdown', activate, true)
     document.addEventListener('keydown', activate, true)
     document.addEventListener('pointerover', playHover)
@@ -330,15 +386,16 @@ export function useGameAudio(settings, menuActive, park) {
 
   onUnmounted(() => {
     music.removeEventListener('ended', startNextTrack)
+    ambience.removeEventListener('ended', syncAmbience)
     document.removeEventListener('pointerdown', activate, true)
     document.removeEventListener('keydown', activate, true)
     document.removeEventListener('pointerover', playHover)
     document.removeEventListener('click', playClick, true)
     stopCombatSounds()
     for (const id of penaltyEffects.keys()) stopPenaltySound(id)
-    for (const audio of [click, hover, music, smokeAffected]) audio.pause()
+    for (const audio of [click, hover, music, smokeAffected, ambience]) audio.pause()
     context?.close().catch(() => {})
   })
 
-  return playCombatSounds
+  return { playCombatSounds, getFireworksSceneTime }
 }

@@ -47,7 +47,7 @@ const connection = createRoomConnection(async (reason) => {
 }, (sounds) => playCombatSounds(sounds))
 const { room, playerId, park, reconnecting } = connection
 const menuActive = computed(() => room.value?.phase !== 'park')
-const playCombatSounds = useGameAudio(audioSettings, menuActive, park)
+const { playCombatSounds, getFireworksSceneTime } = useGameAudio(audioSettings, menuActive, park)
 
 watch(room, (value, previous) => {
   if (value && !previous) lobby.value?.focusHeading()
@@ -139,6 +139,7 @@ onUnmounted(() => {
     :command="connection.command"
     :leave="leaveRoom"
     :play-sounds="playCombatSounds"
+    :get-fireworks-scene-time="getFireworksSceneTime"
   />
   <RoomLobby
     v-else-if="room"

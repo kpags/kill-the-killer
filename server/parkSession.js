@@ -404,6 +404,7 @@ export function parkView(game, playerId, now) {
   return {
     area,
     serverTime: now,
+    crowdReacting: Boolean(game.npcPanics.get(area)?.hasWitnesses),
     heartbeatIntervalMs: heartbeatInterval(game, actor),
     equippedItem: actor.equippedItem,
     smokeObscured,

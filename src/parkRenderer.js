@@ -272,7 +272,7 @@ export async function loadParkArt() {
   return Object.fromEntries(entries)
 }
 
-export function createParkRenderer(canvas, art) {
+export function createParkRenderer(canvas, art, getFireworksSceneTime) {
   const ctx = canvas.getContext('2d')
   const playerShadow = createPlayerShadow()
   const distortionCtx = document.createElement('canvas').getContext('2d')
@@ -502,7 +502,8 @@ export function createParkRenderer(canvas, art) {
     }
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
     const scene = art[area.art]
-    const sceneFrame = frameAt(scene, time)
+    const sceneTime = area.id === 'fireworks' ? getFireworksSceneTime() ?? time : time
+    const sceneFrame = frameAt(scene, sceneTime)
     if (penaltyStrength) {
       distortScene(distortionCtx, scene, sceneFrame, penaltyStrength, time)
       ctx.filter = penaltyFilter

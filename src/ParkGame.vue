@@ -25,6 +25,7 @@ const props = defineProps({
   command: { type: Function, required: true },
   leave: { type: Function, required: true },
   playSounds: { type: Function, required: true },
+  getFireworksSceneTime: { type: Function, required: true },
 })
 
 const directions = [
@@ -593,7 +594,7 @@ onMounted(async () => {
     })])
     if (disposed) return
     purplePortrait.value = art['purple-idle'].image.toDataURL()
-    draw = createParkRenderer(canvas.value, art)
+    draw = createParkRenderer(canvas.value, art, props.getFireworksSceneTime)
     artReady.value = true
     frameId = requestAnimationFrame(render)
   } catch {
@@ -626,6 +627,7 @@ function readState() {
     score: props.state?.score,
     playerList: playerListOpen.value ? props.state?.playerList ?? [] : null,
     combatFeedback: props.state?.combatFeedback,
+    crowdReacting: props.state?.crowdReacting ?? false,
     penaltyActive: penaltyActive.value,
     penaltyStrength: penaltyStrength.value,
     stunnedView: stunnedView.value,

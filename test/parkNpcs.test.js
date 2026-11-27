@@ -94,6 +94,7 @@ test('a player death causes a synchronized scream, nearest-edge flight and stagg
     const startsAt = killed.combat.endsAt + 1000
     assert.equal(panic.startsAt, startsAt)
     stepPark(game, 0, startsAt - 1)
+    assert.equal(parkView(game, 'attacker', startsAt - 1).crowdReacting, false)
     assert.equal(left.pose, 'sit')
     assert.deepEqual(game.soundEvents.get(areaIndex).map(({ kind }) => kind), ['kill'])
     stepPark(game, 0, startsAt)
@@ -109,6 +110,11 @@ test('a player death causes a synchronized scream, nearest-edge flight and stagg
     assert.equal(left.seatSlot, null)
     assert.ok([...game.npcs.values()].filter(({ area }) => area !== areaIndex).every(({ pose }) => !pose.startsWith('scream')))
     const view = parkView(game, 'attacker', startsAt)
+    assert.equal(view.crowdReacting, true)
+    const attacker = game.players.get('attacker')
+    attacker.area = (areaIndex + 1) % areas.length
+    assert.equal(parkView(game, 'attacker', startsAt).crowdReacting, false)
+    attacker.area = areaIndex
     const visibleRight = view.actors.find(({ id }) => id === right.id)
     assert.equal(visibleRight.actionStartedAt, startsAt)
     assert.equal(visibleRight.facing, -1)
@@ -130,7 +136,9 @@ test('a player death causes a synchronized scream, nearest-edge flight and stagg
     assert.equal(locals().length, 0)
     stepPark(game, 0, panic.returnsAt - 1)
     assert.equal(locals().length, 0)
+    assert.equal(parkView(game, 'attacker', panic.returnsAt - 1).crowdReacting, true)
     stepPark(game, 0, panic.returnsAt)
+    assert.equal(parkView(game, 'attacker', panic.returnsAt).crowdReacting, false)
     assert.equal(locals().length, 1)
     assert.equal(locals()[0].pose, 'walk')
     assert.ok([area.left, area.right].includes(locals()[0].x))

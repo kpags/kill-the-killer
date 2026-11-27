@@ -252,6 +252,7 @@ function startPanic(game, areaIndex, { startsAt, deathX }) {
       fleeDirection: actor.x <= (area.left + area.right) / 2 ? -1 : 1,
     })
   }
+  return crowd.length > 0
 }
 
 function releasePanic(game, areaIndex, returnsAt) {
@@ -274,7 +275,7 @@ function stepPanic(game, areaIndex, panic, elapsedMs, now) {
   if (now < panic.startsAt) return
   if (!panic.started) {
     panic.started = true
-    startPanic(game, areaIndex, panic)
+    panic.hasWitnesses = startPanic(game, areaIndex, panic)
   }
   if (panic.returnsAt !== null) {
     if (now >= panic.returnsAt) releasePanic(game, areaIndex, panic.returnsAt)
