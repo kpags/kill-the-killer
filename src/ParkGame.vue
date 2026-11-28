@@ -21,7 +21,7 @@ const props = defineProps({
   state: Object,
   playerId: { type: String, required: true },
   reconnecting: Boolean,
-  portraitBlocked: Boolean,
+  screenBlocked: Boolean,
   input: { type: Function, required: true },
   command: { type: Function, required: true },
   leave: { type: Function, required: true },
@@ -149,7 +149,7 @@ const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.li
 const canAct = computed(() => alive.value && !props.state?.matchEnded && !playingActivity.value && playerListOpen.value !== 'touch'
   && !['combat', 'consume'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
-const movementBlocked = computed(() => props.portraitBlocked || props.reconnecting || !artReady.value || !canMove.value
+const movementBlocked = computed(() => props.screenBlocked || props.reconnecting || !artReady.value || !canMove.value
   || Boolean(pauseScreen.value) || actionsOpen.value || inventoryOpen.value)
 const lifecycleNotice = computed(() => {
   if (props.state?.result || props.state?.victimCue?.kind === 'killed') return null
@@ -304,7 +304,7 @@ function equipInventorySelection() {
 }
 
 async function equipItem(itemId) {
-  if (itemId === equippedItem.value || activeCommand || props.reconnecting || !canAct.value || !artReady.value) return
+  if (itemId === equippedItem.value || activeCommand || props.screenBlocked || props.reconnecting || !canAct.value || !artReady.value) return
   activeCommand = true
   try {
     await props.command('equip_item', { itemId })
@@ -312,6 +312,14 @@ async function equipItem(itemId) {
     showGameplayNotice(failure.message)
   } finally {
     activeCommand = false
+  }
+}
+
+function tapInventorySlot(event, itemId) {
+  if (event.pointerType !== 'touch') return
+  const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
+  if (event.clientX >= left && event.clientX <= right && event.clientY >= top && event.clientY <= bottom) {
+    equipItem(itemId)
   }
 }
 
@@ -417,7 +425,7 @@ async function toggleTouchScoreboard() {
 }
 
 function keyDown(event) {
-  if (props.portraitBlocked || props.state?.result || playingActivity.value) return
+  if (props.screenBlocked || props.state?.result || playingActivity.value) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
@@ -535,7 +543,7 @@ watch(() => props.reconnecting, (value) => {
     clearHeldControls()
   }
 })
-watch(() => props.portraitBlocked, (value) => { if (value) clearHeldControls() })
+watch(() => props.screenBlocked, (value) => { if (value) clearHeldControls() })
 watch(canAct, (value) => {
   if (value) return
   closeActions()
@@ -925,7 +933,7 @@ defineExpose({ readState })
           <button type="button" class="park-inventory-slot" :aria-pressed="key === equippedItem"
             :aria-label="`Equip ${item.name}`" :title="item.name"
             :disabled="!canAct || !artReady || reconnecting || Boolean(pauseScreen) || actionsOpen || inventoryOpen"
-            @click="equipItem(key)">
+            @pointerup="tapInventorySlot($event, key)" @click="$event.pointerType !== 'touch' && equipItem(key)">
             <img :src="inventoryImages[`../${item.display_image}`]" alt="" draggable="false" />
             <span v-if="cooldownSweeps[key] < 360" class="park-inventory-cooldown"
               :style="{ '--cooldown-sweep': `${cooldownSweeps[key]}deg` }" role="img" aria-label="Recharging"></span>
@@ -2124,6 +2132,7 @@ defineExpose({ readState })
   .park-inventory-slot {
     width: var(--park-touch-size);
     padding: 4px;
+    touch-action: none;
   }
 
   .park-touch-actions {

@@ -22,16 +22,48 @@ const homeSettingsOpen = ref(false)
 const homeSettings = ref(null)
 const homeSettingsButton = ref(null)
 const audioSettings = ref(loadAudioSettings())
-const portraitQuery = window.matchMedia('(hover: none) and (any-pointer: coarse) and (orientation: portrait)')
-const portraitBlocked = ref(portraitQuery.matches)
-const landscapePrompt = ref(null)
+const mobileQuery = window.matchMedia('(hover: none) and (any-pointer: coarse)')
+const portraitQuery = window.matchMedia('(orientation: portrait)')
+const displayPrompt = ref(null)
+const displayDialog = ref(null)
+const fullscreenButton = ref(null)
+const fullscreenAvailable = document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function'
+const fullscreenPending = ref(false)
+const fullscreenError = ref(false)
+let fullscreenSkipped = false
 
-function updateOrientation() {
-  portraitBlocked.value = portraitQuery.matches
-  const dialog = landscapePrompt.value
-  if (portraitBlocked.value === dialog.open) return
-  if (portraitBlocked.value) dialog.showModal()
-  else dialog.close()
+function updateDisplayPrompt() {
+  if (!mobileQuery.matches) displayPrompt.value = null
+  else if (portraitQuery.matches) displayPrompt.value = 'landscape'
+  else displayPrompt.value = document.fullscreenElement || fullscreenSkipped ? null : 'fullscreen'
+}
+
+watch(displayPrompt, (prompt) => {
+  const dialog = displayDialog.value
+  if (!prompt) dialog.close()
+  else {
+    if (!dialog.open) dialog.showModal()
+    if (prompt === 'fullscreen') fullscreenButton.value?.focus()
+  }
+}, { flush: 'post' })
+
+async function enterFullscreen() {
+  if (!fullscreenAvailable || fullscreenPending.value) return
+  fullscreenPending.value = true
+  fullscreenError.value = false
+  try {
+    await document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+    updateDisplayPrompt()
+  } catch {
+    fullscreenError.value = true
+  } finally {
+    fullscreenPending.value = false
+  }
+}
+
+function continueWithoutFullscreen() {
+  fullscreenSkipped = true
+  updateDisplayPrompt()
 }
 
 function loadAudioSettings() {
@@ -124,8 +156,10 @@ async function closeHomeSettings() {
 }
 
 onMounted(() => {
-  updateOrientation()
-  portraitQuery.addEventListener('change', updateOrientation)
+  updateDisplayPrompt()
+  mobileQuery.addEventListener('change', updateDisplayPrompt)
+  portraitQuery.addEventListener('change', updateDisplayPrompt)
+  document.addEventListener('fullscreenchange', updateDisplayPrompt)
   connection.restore()
   window.render_game_to_text = () => JSON.stringify(game.value?.readState() ?? lobby.value?.readState() ?? {
     screen: homeSettingsOpen.value ? 'settings' : joinFormOpen.value ? 'join' : 'home',
@@ -135,7 +169,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  portraitQuery.removeEventListener('change', updateOrientation)
+  mobileQuery.removeEventListener('change', updateDisplayPrompt)
+  portraitQuery.removeEventListener('change', updateDisplayPrompt)
+  document.removeEventListener('fullscreenchange', updateDisplayPrompt)
   connection.dispose()
   delete window.render_game_to_text
 })
@@ -149,7 +185,7 @@ onUnmounted(() => {
     :state="park"
     :player-id="playerId"
     :reconnecting="reconnecting"
-    :portrait-blocked="portraitBlocked"
+    :screen-blocked="Boolean(displayPrompt)"
     :input="connection.input"
     :command="connection.command"
     :leave="leaveRoom"
@@ -203,8 +239,19 @@ onUnmounted(() => {
       </p>
     </section>
   </main>
-  <dialog ref="landscapePrompt" class="landscape-prompt" aria-labelledby="landscape-message" @cancel.prevent>
-    <p id="landscape-message">Turn to landscape for better experience</p>
+  <dialog ref="displayDialog" class="display-prompt" aria-labelledby="display-prompt-message" @cancel.prevent>
+    <div class="display-prompt-content">
+      <p id="display-prompt-message">{{ displayPrompt === 'landscape' ? 'Turn to landscape for better experience' : 'Make it fullscreen' }}</p>
+      <template v-if="displayPrompt === 'fullscreen'">
+        <button v-if="fullscreenAvailable" ref="fullscreenButton" type="button" class="glass-button"
+          :disabled="fullscreenPending" @click="enterFullscreen">Go fullscreen</button>
+        <p v-if="!fullscreenAvailable || fullscreenError" class="display-prompt-status" role="status">
+          {{ fullscreenError ? 'The browser did not enter fullscreen.' : 'Fullscreen is unavailable in this browser.' }}
+        </p>
+        <button v-if="!fullscreenAvailable || fullscreenError" type="button" class="glass-button"
+          @click="continueWithoutFullscreen">Continue without fullscreen</button>
+      </template>
+    </div>
   </dialog>
 </template>
 
@@ -223,9 +270,9 @@ body {
   margin: 0;
 }
 
-body:has(.landscape-prompt[open]) { overflow: hidden; }
+body:has(.display-prompt[open]) { overflow: hidden; }
 
-.landscape-prompt[open] {
+.display-prompt[open] {
   position: fixed;
   inset: 0;
   display: grid;
@@ -242,11 +289,13 @@ body:has(.landscape-prompt[open]) { overflow: hidden; }
   text-align: center;
   font-size: clamp(1.125rem, 5vw, 1.5rem);
   font-weight: 700;
-  touch-action: none;
+  touch-action: manipulation;
 }
 
-.landscape-prompt::backdrop { background: #000; }
-.landscape-prompt p { max-width: 24ch; margin: 0; }
+.display-prompt::backdrop { background: #000; }
+.display-prompt-content { display: grid; justify-items: center; gap: 10px; }
+.display-prompt p { max-width: 24ch; margin: 0; }
+.display-prompt .display-prompt-status { font-size: 0.875rem; font-weight: 400; }
 
 .game-scene {
   --scene-art: url('../assets/images/background/desktop.png');
