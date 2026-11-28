@@ -942,27 +942,27 @@ defineExpose({ readState })
       </ol>
 
       <div class="park-touch-actions" role="group" aria-label="Touch controls">
-        <button type="button" class="glass-button park-button park-touch-button" aria-label="Interact"
-          :disabled="!prompt || reconnecting" @click="interact">
-          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8 13V6a1.5 1.5 0 0 1 3 0v4-6a1.5 1.5 0 0 1 3 0v6-4a1.5 1.5 0 0 1 3 0v5-2a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-4.5-5.5a1.6 1.6 0 0 1 2.4-2.1L8 13z" />
-          </svg>
-        </button>
-        <button type="button" class="glass-button park-button park-touch-button" aria-label="Sprint"
+        <button type="button" class="glass-button park-button park-touch-button park-touch-sprint" aria-label="Sprint"
           :disabled="movementBlocked" @pointerdown.prevent="holdSprint" @pointerup="releaseSprint"
           @pointercancel="releaseSprint" @lostpointercapture="releaseSprint">
           <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M15.5 13.5c1.5-.1 2.5-1.7 3.4-3.4 1-1.9.7-3.6-.8-4-1.6-.3-3.1 1.2-3.7 3-.6 1.8-.3 4.5 1.1 4.4zM15.4 16l-.4 1.9M8.5 16.5c1.5-.1 2.5-1.7 3.4-3.4 1-1.9.7-3.6-.8-4-1.6-.3-3.1 1.2-3.7 3-.6 1.8-.3 4.5 1.1 4.4zM8.4 19l-.4 1.8M3 8l4-4M4 13l1.5-1.5M10 6.5l2-2" />
           </svg>
         </button>
-        <button type="button" class="glass-button park-button park-touch-button" aria-label="Actions" aria-haspopup="dialog"
+        <button type="button" class="glass-button park-button park-touch-button park-touch-interact" aria-label="Interact"
+          :disabled="!prompt || reconnecting" @click="interact">
+          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 13V6a1.5 1.5 0 0 1 3 0v4-6a1.5 1.5 0 0 1 3 0v6-4a1.5 1.5 0 0 1 3 0v5-2a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-4.5-5.5a1.6 1.6 0 0 1 2.4-2.1L8 13z" />
+          </svg>
+        </button>
+        <button type="button" class="glass-button park-button park-touch-button park-touch-wheel" aria-label="Actions" aria-haspopup="dialog"
           :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">
           <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="5" r="2.8" />
             <path d="M12 8v7m-4 6 4-6 4 6M7 13l5-3 5 3" />
           </svg>
         </button>
-        <button ref="scoreboardButton" type="button" class="glass-button park-button park-touch-button" aria-label="Scoreboard"
+        <button ref="scoreboardButton" type="button" class="glass-button park-button park-touch-button park-touch-scoreboard" aria-label="Scoreboard"
           aria-haspopup="dialog" :aria-expanded="playerListOpen === 'touch'" :disabled="!state || state.matchEnded || reconnecting"
           @click="toggleTouchScoreboard">
           <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -2058,8 +2058,10 @@ defineExpose({ readState })
 
 @media (hover: none) and (any-pointer: coarse) and (orientation: landscape) {
   .park-game {
-    --park-touch-inset: max(8px, env(safe-area-inset-bottom));
-    --park-touch-size: clamp(44px, 12dvh, 60px);
+    --park-inventory-inset: max(8px, env(safe-area-inset-bottom));
+    --park-control-inset: max(30px, env(safe-area-inset-bottom));
+    --park-inventory-size: clamp(44px, 12dvh, 60px);
+    --park-touch-size: calc(var(--park-inventory-size) + 4px);
     min-height: 0;
   }
 
@@ -2078,7 +2080,7 @@ defineExpose({ readState })
     grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
     align-items: end;
     gap: 6px;
-    padding: 0 max(10px, env(safe-area-inset-right)) var(--park-touch-inset) max(10px, env(safe-area-inset-left));
+    padding: 0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left));
     border: 0;
     background: transparent;
     pointer-events: none;
@@ -2102,8 +2104,9 @@ defineExpose({ readState })
     position: relative;
     display: block;
     justify-self: start;
-    width: calc(2 * var(--park-touch-size) + 5px);
+    width: calc(2 * var(--park-touch-size) + 9px);
     aspect-ratio: 1;
+    margin-bottom: var(--park-control-inset);
     border: 2px solid #fff7eda6;
     border-radius: 50%;
     background: #181b2ab3;
@@ -2126,21 +2129,32 @@ defineExpose({ readState })
 
   .park-inventory-bar {
     gap: clamp(3px, 1vw, 8px);
+    margin-bottom: var(--park-inventory-inset);
     padding: 0;
   }
 
   .park-inventory-slot {
-    width: var(--park-touch-size);
+    width: var(--park-inventory-size);
     padding: 4px;
     touch-action: none;
   }
 
   .park-touch-actions {
+    --park-diamond-step: calc(0.75 * var(--park-touch-size) + 4px);
     display: grid;
-    grid-template-columns: repeat(2, var(--park-touch-size));
+    grid-template-areas: ". sprint ." "interact . actions" ". scoreboard .";
+    grid-template-columns: repeat(3, var(--park-diamond-step));
+    grid-template-rows: repeat(3, var(--park-diamond-step));
+    place-items: center;
     justify-self: end;
-    gap: 5px;
+    margin-bottom: var(--park-control-inset);
+    padding: calc((var(--park-touch-size) - var(--park-diamond-step)) / 2);
   }
+
+  .park-touch-sprint { grid-area: sprint; }
+  .park-touch-interact { grid-area: interact; }
+  .park-touch-wheel { grid-area: actions; }
+  .park-touch-scoreboard { grid-area: scoreboard; }
 
   .park-touch-button {
     display: grid;
@@ -2155,6 +2169,8 @@ defineExpose({ readState })
     backdrop-filter: none;
   }
 
-  .park-lifecycle { bottom: calc(var(--park-touch-size) + var(--park-touch-inset) + 6px); }
+  .park-touch-button .park-control-icon { width: 26px; height: 26px; }
+
+  .park-lifecycle { bottom: calc(var(--park-inventory-size) + var(--park-inventory-inset) + 6px); }
 }
 </style>
