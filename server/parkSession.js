@@ -88,7 +88,8 @@ export function setParkInput(actor, input, now) {
 
 function applyParkInput(actor, input, now) {
   if (!isLiving(actor) || actor.combat || actor.mode === 'consume') return
-  if (![-1, 0, 1].includes(input.x) || ![-1, 0, 1].includes(input.y) || typeof input.sprint !== 'boolean') return
+  if (!Number.isFinite(input.x) || Math.abs(input.x) > 1
+    || !Number.isFinite(input.y) || Math.abs(input.y) > 1 || typeof input.sprint !== 'boolean') return
   actor.input = { x: input.x, y: input.y, sprint: input.sprint, until: now + 300 }
   if (!input.sprint) actor.exhausted = false
 }
@@ -383,7 +384,7 @@ export function stepPark(game, elapsedMs, now) {
       const speedFactor = actor.poison ? poisonSpeedFactor : 1
       const distance = speedFactor * (sprintSpeed * spentMs + walkSpeed * (elapsedMs - spentMs)) / 1000
       const magnitude = Math.hypot(input.x, input.y)
-      if (input.x) actor.facing = input.x
+      if (input.x) actor.facing = Math.sign(input.x)
       if (move(actor, distance * input.x / magnitude, distance * input.y / magnitude)) {
         actor.pose = sprinting ? 'sprint' : 'walk'
       } else {

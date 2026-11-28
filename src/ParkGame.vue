@@ -21,6 +21,7 @@ const props = defineProps({
   state: Object,
   playerId: { type: String, required: true },
   reconnecting: Boolean,
+  portraitBlocked: Boolean,
   input: { type: Function, required: true },
   command: { type: Function, required: true },
   leave: { type: Function, required: true },
@@ -29,10 +30,10 @@ const props = defineProps({
 })
 
 const directions = [
-  { key: 'KeyW', label: 'Move up', arrow: '↑' },
-  { key: 'KeyA', label: 'Move left', arrow: '←' },
-  { key: 'KeyS', label: 'Move down', arrow: '↓' },
-  { key: 'KeyD', label: 'Move right', arrow: '→' },
+  { key: 'KeyW', label: 'Move up' },
+  { key: 'KeyA', label: 'Move left' },
+  { key: 'KeyS', label: 'Move down' },
+  { key: 'KeyD', label: 'Move right' },
 ]
 const actionSlots = ['Phone', 'Talk', 'Dance', 'Scream', null, null]
 const inventorySlots = Object.entries(inventory)
@@ -80,7 +81,9 @@ const victimCueArt = { killed: killedCueArt, stunned: stunnedCueArt }
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const idleSprites = import.meta.glob('../assets/gameplay/*-idle.webp', { eager: true, import: 'default', query: '?url' })
 const pressed = new Set()
-const pointers = new Map()
+const joystick = ref({ x: 0, y: 0 })
+let joystickPointer = null
+let sprintPointer = null
 const movement = new Set([...directions.map(({ key }) => key), 'ShiftLeft'])
 const canvas = ref(null)
 const overheadPrompt = ref(null)
@@ -146,6 +149,8 @@ const blackout = computed(() => ['dying', 'respawning'].includes(props.state?.li
 const canAct = computed(() => alive.value && !props.state?.matchEnded && !playingActivity.value && playerListOpen.value !== 'touch'
   && !['combat', 'consume'].includes(props.state?.mode))
 const canMove = computed(() => canAct.value && ['free', 'action'].includes(props.state?.mode))
+const movementBlocked = computed(() => props.portraitBlocked || props.reconnecting || !artReady.value || !canMove.value
+  || Boolean(pauseScreen.value) || actionsOpen.value || inventoryOpen.value)
 const lifecycleNotice = computed(() => {
   if (props.state?.result || props.state?.victimCue?.kind === 'killed') return null
   if (props.state?.respawnMs) return `Respawning in ${Math.ceil(props.state.respawnMs / 1000)}s`
@@ -192,12 +197,15 @@ let lastDamageBeat
 let lastNotTargetFeedbackAt = -Infinity
 
 function transmit() {
-  const active = new Set([...pressed, ...pointers.values()])
-  const blocked = pauseScreen.value || actionsOpen.value || inventoryOpen.value || !artReady.value || props.reconnecting || !canMove.value
+  const x = Number(pressed.has('KeyD')) - Number(pressed.has('KeyA'))
+  const y = Number(pressed.has('KeyS')) - Number(pressed.has('KeyW'))
+  const axes = x || y ? { x, y } : joystick.value
+  const inDeadZone = Math.hypot(axes.x, axes.y) < 0.15
+  const blocked = movementBlocked.value
   props.input({
-    x: blocked ? 0 : Number(active.has('KeyD')) - Number(active.has('KeyA')),
-    y: blocked ? 0 : Number(active.has('KeyS')) - Number(active.has('KeyW')),
-    sprint: !blocked && active.has('ShiftLeft'),
+    x: blocked || inDeadZone ? 0 : axes.x,
+    y: blocked || inDeadZone ? 0 : axes.y,
+    sprint: !blocked && (pressed.has('ShiftLeft') || sprintPointer !== null),
   })
 }
 
@@ -215,7 +223,9 @@ function clearHeldControls() {
 
 function releaseMovement() {
   pressed.clear()
-  pointers.clear()
+  joystickPointer = null
+  joystick.value = { x: 0, y: 0 }
+  sprintPointer = null
   transmit()
 }
 
@@ -407,7 +417,7 @@ async function toggleTouchScoreboard() {
 }
 
 function keyDown(event) {
-  if (props.state?.result || playingActivity.value) return
+  if (props.portraitBlocked || props.state?.result || playingActivity.value) return
   if (event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     openPause()
@@ -467,15 +477,41 @@ function keyUp(event) {
   transmit()
 }
 
-function holdTouch(event, key) {
-  if (pauseScreen.value || actionsOpen.value) return
+function startJoystick(event) {
+  if (movementBlocked.value || joystickPointer !== null || event.button !== 0) return
   event.currentTarget.setPointerCapture(event.pointerId)
-  pointers.set(event.pointerId, key)
+  joystickPointer = event.pointerId
+  moveJoystick(event)
+}
+
+function moveJoystick(event) {
+  if (joystickPointer !== event.pointerId) return
+  const { left, top, width, height } = event.currentTarget.getBoundingClientRect()
+  const x = event.clientX - left - width / 2
+  const y = event.clientY - top - height / 2
+  const radius = Math.max(width * 0.3, Math.hypot(x, y))
+  joystick.value = { x: x / radius, y: y / radius }
   transmit()
 }
 
-function releaseTouch(event) {
-  if (pointers.delete(event.pointerId)) transmit()
+function releaseJoystick(event) {
+  if (joystickPointer !== event.pointerId) return
+  joystickPointer = null
+  joystick.value = { x: 0, y: 0 }
+  transmit()
+}
+
+function holdSprint(event) {
+  if (movementBlocked.value || sprintPointer !== null || event.button !== 0) return
+  event.currentTarget.setPointerCapture(event.pointerId)
+  sprintPointer = event.pointerId
+  transmit()
+}
+
+function releaseSprint(event) {
+  if (sprintPointer !== event.pointerId) return
+  sprintPointer = null
+  transmit()
 }
 
 function refocus() {
@@ -499,6 +535,7 @@ watch(() => props.reconnecting, (value) => {
     clearHeldControls()
   }
 })
+watch(() => props.portraitBlocked, (value) => { if (value) clearHeldControls() })
 watch(canAct, (value) => {
   if (value) return
   closeActions()
@@ -667,7 +704,7 @@ onMounted(async () => {
   window.addEventListener('blur', clearHeldControls)
   document.addEventListener('visibilitychange', clearHeldControls)
   repeatInput = window.setInterval(() => {
-    if (pressed.size || pointers.size) transmit()
+    if (pressed.size || joystickPointer !== null || sprintPointer !== null) transmit()
   }, 80)
 
   try {
@@ -788,7 +825,12 @@ defineExpose({ readState })
         </div>
       </div>
       <button type="button" class="glass-button park-button park-hud-pause" aria-keyshortcuts="P"
-        :disabled="Boolean(state?.result)" @click="openPause">Pause</button>
+        aria-label="Pause" title="Pause" :disabled="Boolean(state?.result)" @click="openPause">
+        <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 3h4l.6 2.4 1.6.9 2.4-.7 2 3.4-1.8 1.7v2.6l1.8 1.7-2 3.4-2.4-.7-1.6.9L14 21h-4l-.6-2.4-1.6-.9-2.4.7-2-3.4 1.8-1.7v-2.6L3.4 9l2-3.4 2.4.7 1.6-.9z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
       <section class="park-target" aria-label="Target">
         <div class="park-target-text">
           <span v-if="target">Kill</span>
@@ -823,26 +865,28 @@ defineExpose({ readState })
           <li v-for="notice in state.penaltyNotices" :key="notice.id">{{ notice.name }} at {{ areas[notice.area].name }}</li>
         </ul>
       </aside>
-      <aside class="park-combat-feed" aria-label="Combat feed">
-        <ul role="log">
-          <li v-for="entry in state?.combatFeed" :key="entry.id">
-            <span :style="{ color: playerNameColors[entry.actor.color] }">{{ entry.actor.name }}</span>
-            {{ entry.kind === 'killer-stun' ? ' stunned ' : ' killed ' }}
-            <span v-if="entry.target" :style="{ color: playerNameColors[entry.target.color] }">{{ entry.target.name }}</span>
-            <span v-else>an NPC</span>
-          </li>
-        </ul>
-      </aside>
-      <p v-if="loadError || reconnecting || !state || !artReady" class="park-notice" role="status">
-        {{ loadError || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
-      </p>
-      <div v-if="penaltyActive" class="park-penalty-status" role="status">
-        <p class="park-penalty-title">IN PENALTY</p>
-        <ul class="park-penalty-effects">
-          <li>Blurred/Distorted Vision</li>
-          <li>Location Exposed to All</li>
-          <li>Items Disabled</li>
-        </ul>
+      <div class="park-stage-notices">
+        <aside class="park-combat-feed" aria-label="Combat feed">
+          <ul role="log">
+            <li v-for="entry in state?.combatFeed" :key="entry.id">
+              <span :style="{ color: playerNameColors[entry.actor.color] }">{{ entry.actor.name }}</span>
+              {{ entry.kind === 'killer-stun' ? ' stunned ' : ' killed ' }}
+              <span v-if="entry.target" :style="{ color: playerNameColors[entry.target.color] }">{{ entry.target.name }}</span>
+              <span v-else>an NPC</span>
+            </li>
+          </ul>
+        </aside>
+        <p v-if="loadError || reconnecting || !state || !artReady" class="park-notice" role="status">
+          {{ loadError || (reconnecting ? 'Reconnecting…' : 'Loading Park…') }}
+        </p>
+        <div v-if="penaltyActive" class="park-penalty-status" role="status">
+          <p class="park-penalty-title">IN PENALTY</p>
+          <ul class="park-penalty-effects">
+            <li>Blurred/Distorted Vision</li>
+            <li>Location Exposed to All</li>
+            <li>Items Disabled</li>
+          </ul>
+        </div>
       </div>
       <div class="park-feedback-status" role="status" aria-atomic="false" aria-relevant="additions">
         <span v-for="feedback in state?.combatFeedback" :key="feedback.startedAt">{{ feedback.text }}</span>
@@ -869,6 +913,13 @@ defineExpose({ readState })
     </div>
 
     <footer class="park-controls">
+      <div class="park-joystick" role="group" aria-label="Movement joystick" :aria-disabled="movementBlocked"
+        @pointerdown.prevent="startJoystick" @pointermove="moveJoystick" @pointerup="releaseJoystick"
+        @pointercancel="releaseJoystick" @lostpointercapture="releaseJoystick">
+        <span class="park-joystick-thumb" aria-hidden="true"
+          :style="{ '--joystick-x': `${joystick.x * 30}%`, '--joystick-y': `${joystick.y * 30}%` }"></span>
+      </div>
+
       <ol class="park-inventory-bar" aria-label="Inventory slots">
         <li v-for="[key, item] in inventorySlots" :key="key">
           <button type="button" class="park-inventory-slot" :aria-pressed="key === equippedItem"
@@ -882,43 +933,34 @@ defineExpose({ readState })
         </li>
       </ol>
 
-      <div class="park-touch" aria-label="Touch controls">
-        <div class="park-direction">
-          <button
-            v-for="{ key, label, arrow } in directions"
-            :key="key"
-            type="button"
-            class="glass-button park-button"
-            :class="key"
-            :aria-label="label"
-            :disabled="!canMove || reconnecting"
-            @pointerdown.prevent="holdTouch($event, key)"
-            @pointerup="releaseTouch"
-            @pointercancel="releaseTouch"
-            @lostpointercapture="releaseTouch"
-          >{{ arrow }}</button>
-        </div>
-        <div class="park-touch-actions">
-          <div class="park-touch-sprint">
-            <button
-              type="button"
-              class="glass-button park-button"
-              :disabled="!canMove || reconnecting"
-              @pointerdown.prevent="holdTouch($event, 'ShiftLeft')"
-              @pointerup="releaseTouch"
-              @pointercancel="releaseTouch"
-              @lostpointercapture="releaseTouch"
-            >Sprint</button>
-            <button ref="scoreboardButton" type="button" class="glass-button park-button" aria-haspopup="dialog"
-              :aria-expanded="playerListOpen === 'touch'" :disabled="!state || state.matchEnded || reconnecting"
-              @click="toggleTouchScoreboard">Scoreboard</button>
-          </div>
-          <button type="button" class="glass-button park-button" :disabled="!prompt || reconnecting" @click="interact">
-            Interact
-          </button>
-          <button type="button" class="glass-button park-button" aria-haspopup="dialog"
-            :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">Actions</button>
-        </div>
+      <div class="park-touch-actions" role="group" aria-label="Touch controls">
+        <button type="button" class="glass-button park-button park-touch-button" aria-label="Interact"
+          :disabled="!prompt || reconnecting" @click="interact">
+          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 13V6a1.5 1.5 0 0 1 3 0v4-6a1.5 1.5 0 0 1 3 0v6-4a1.5 1.5 0 0 1 3 0v5-2a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-4.5-5.5a1.6 1.6 0 0 1 2.4-2.1L8 13z" />
+          </svg>
+        </button>
+        <button type="button" class="glass-button park-button park-touch-button" aria-label="Sprint"
+          :disabled="movementBlocked" @pointerdown.prevent="holdSprint" @pointerup="releaseSprint"
+          @pointercancel="releaseSprint" @lostpointercapture="releaseSprint">
+          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15.5 13.5c1.5-.1 2.5-1.7 3.4-3.4 1-1.9.7-3.6-.8-4-1.6-.3-3.1 1.2-3.7 3-.6 1.8-.3 4.5 1.1 4.4zM15.4 16l-.4 1.9M8.5 16.5c1.5-.1 2.5-1.7 3.4-3.4 1-1.9.7-3.6-.8-4-1.6-.3-3.1 1.2-3.7 3-.6 1.8-.3 4.5 1.1 4.4zM8.4 19l-.4 1.8M3 8l4-4M4 13l1.5-1.5M10 6.5l2-2" />
+          </svg>
+        </button>
+        <button type="button" class="glass-button park-button park-touch-button" aria-label="Actions" aria-haspopup="dialog"
+          :disabled="!canAct || !artReady || reconnecting" @click="toggleActions">
+          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="5" r="2.8" />
+            <path d="M12 8v7m-4 6 4-6 4 6M7 13l5-3 5 3" />
+          </svg>
+        </button>
+        <button ref="scoreboardButton" type="button" class="glass-button park-button park-touch-button" aria-label="Scoreboard"
+          aria-haspopup="dialog" :aria-expanded="playerListOpen === 'touch'" :disabled="!state || state.matchEnded || reconnecting"
+          @click="toggleTouchScoreboard">
+          <svg class="park-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 20v-9h6m0 9V6h6v14m0-6h6v6H3m8-11 1-1v4" />
+          </svg>
+        </button>
       </div>
     </footer>
 
@@ -1054,6 +1096,7 @@ defineExpose({ readState })
 
 <style scoped>
 .park-game {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -1126,9 +1169,24 @@ defineExpose({ readState })
   transition: transform 200ms linear;
 }
 
-.park-hud-pause {
+.park-button.park-hud-pause {
   grid-area: pause;
   justify-self: end;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  padding: 0;
+}
+
+.park-control-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .park-profile {
@@ -1335,7 +1393,8 @@ defineExpose({ readState })
 }
 
 .park-penalized > :not(.park-stage, .park-victim-cue, .park-winner, .park-poison-edge, .park-heartbeat-edge),
-.park-penalized .park-stage > :not(canvas, .park-penalty-status, .park-combat-feed),
+.park-penalized .park-stage > :not(canvas, .park-stage-notices),
+.park-penalized .park-notice,
 .park-penalized dialog::backdrop {
   filter: grayscale(var(--penalty-grayscale));
 }
@@ -1361,18 +1420,21 @@ defineExpose({ readState })
   pointer-events: none;
 }
 
-.park-penalty-status {
+.park-stage-notices {
   position: absolute;
-  top: 12px;
-  left: 50%;
+  inset: 12px 0 auto;
   z-index: 1;
-  width: max-content;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.park-penalty-status {
   max-width: calc(100% - 24px);
   margin: 0;
-  transform: translateX(-50%);
   display: grid;
   gap: 5px;
-  pointer-events: none;
   color: #fff;
   text-align: center;
 }
@@ -1401,8 +1463,6 @@ defineExpose({ readState })
   paint-order: stroke fill;
 }
 
-.park-notice + .park-penalty-status { top: 48px; }
-
 @keyframes park-penalty-blink {
   0%, 100% { opacity: 1; }
   65% { opacity: 0; }
@@ -1415,9 +1475,9 @@ defineExpose({ readState })
 .park-penalty-feed {
   position: absolute;
   top: 12px;
-  left: 12px;
+  left: max(12px, env(safe-area-inset-left));
   z-index: 1;
-  max-width: calc(100% - 24px);
+  max-width: min(24%, 17rem);
   pointer-events: none;
 }
 
@@ -1441,13 +1501,11 @@ defineExpose({ readState })
 }
 
 .park-combat-feed {
-  position: absolute;
-  bottom: 12px;
-  left: max(12px, env(safe-area-inset-left));
-  z-index: 1;
-  max-width: calc(100% - 24px);
+  width: max-content;
+  max-width: 48%;
   pointer-events: none;
   color: #fff;
+  text-align: center;
   font-size: clamp(0.8125rem, 1.7vw, 1rem);
   font-weight: 800;
   line-height: 1.25;
@@ -1456,6 +1514,8 @@ defineExpose({ readState })
   overflow-wrap: anywhere;
 }
 
+.park-combat-feed:not(:has(li)) { position: absolute; }
+
 .park-combat-feed ul {
   display: grid;
   gap: 2px;
@@ -1463,8 +1523,6 @@ defineExpose({ readState })
   padding: 0;
   list-style: none;
 }
-
-.park-stage:has(.park-lifecycle) .park-combat-feed { bottom: 90px; }
 
 .park-lifecycle {
   position: absolute;
@@ -1674,10 +1732,7 @@ defineExpose({ readState })
 }
 
 .park-notice {
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1;
+  position: static;
 }
 
 .park-prompt kbd,
@@ -1982,70 +2037,115 @@ defineExpose({ readState })
   font-size: 0.875rem;
 }
 
-.park-touch {
+.park-joystick,
+.park-touch-actions {
   display: none;
 }
 
-@media (any-pointer: coarse) {
+@media (hover: none) and (any-pointer: coarse) {
   .park-controls-button { display: none; }
-
-  .park-inventory-bar { padding-bottom: 0; }
-
-  .park-touch {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
-    background: #201e28;
-  }
-
-  .park-direction {
-    display: grid;
-    grid-template-areas: '. up .' 'left down right';
-    grid-template-columns: repeat(3, 44px);
-    gap: 3px;
-  }
-
-  .KeyW { grid-area: up; }
-  .KeyA { grid-area: left; }
-  .KeyS { grid-area: down; }
-  .KeyD { grid-area: right; }
-
-  .park-touch-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: end;
-    gap: 5px;
-  }
-
-  .park-touch-sprint {
-    display: grid;
-    gap: 5px;
-  }
-
-  .park-prompt kbd {
-    display: none;
-  }
-
-  .park-touch-label {
-    display: inline;
-  }
+  .park-prompt kbd { display: none; }
+  .park-touch-label { display: inline; }
 }
 
-@media (any-pointer: coarse) and (min-width: 480px) and (max-height: 400px) {
-  .park-controls {
-    display: grid;
-    grid-template-columns: minmax(138px, 1fr) auto minmax(0, 1fr);
-    align-items: end;
-    gap: 8px;
-    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+@media (hover: none) and (any-pointer: coarse) and (orientation: landscape) {
+  .park-game {
+    --park-touch-inset: max(8px, env(safe-area-inset-bottom));
+    --park-touch-size: clamp(44px, 12dvh, 60px);
+    min-height: 0;
   }
 
-  .park-touch { display: contents; }
-  .park-direction { grid-column: 1; grid-row: 1; }
-  .park-inventory-bar { grid-column: 2; grid-row: 1; gap: 5px; padding: 0; }
-  .park-inventory-slot { width: 38px; padding: 4px; }
-  .park-touch-actions { grid-column: 3; grid-row: 1; }
+  .park-hud {
+    grid-template-areas: "profile area stamina pause target";
+    grid-template-columns: minmax(var(--park-profile-width), 1fr) auto minmax(45px, 140px) auto minmax(74px, 1fr);
+    gap: clamp(6px, 1.5vw, 16px);
+    padding: 5px max(10px, env(safe-area-inset-right)) 5px max(10px, env(safe-area-inset-left));
+  }
+
+  .park-controls {
+    position: absolute;
+    inset: auto 0 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+    align-items: end;
+    gap: 6px;
+    padding: 0 max(10px, env(safe-area-inset-right)) var(--park-touch-inset) max(10px, env(safe-area-inset-left));
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .park-joystick,
+  .park-touch-button,
+  .park-inventory-slot {
+    opacity: 0.62;
+    pointer-events: auto;
+  }
+
+  .park-joystick[aria-disabled="true"],
+  .park-touch-button:disabled,
+  .park-inventory-slot:disabled {
+    opacity: 0.38;
+    pointer-events: none;
+  }
+
+  .park-joystick {
+    position: relative;
+    display: block;
+    justify-self: start;
+    width: calc(2 * var(--park-touch-size) + 5px);
+    aspect-ratio: 1;
+    border: 2px solid #fff7eda6;
+    border-radius: 50%;
+    background: #181b2ab3;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .park-joystick-thumb {
+    position: absolute;
+    top: calc(50% + var(--joystick-y));
+    left: calc(50% + var(--joystick-x));
+    width: 38%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 2px solid #fff7ed;
+    border-radius: 50%;
+    background: #fffbef99;
+    pointer-events: none;
+  }
+
+  .park-inventory-bar {
+    gap: clamp(3px, 1vw, 8px);
+    padding: 0;
+  }
+
+  .park-inventory-slot {
+    width: var(--park-touch-size);
+    padding: 4px;
+  }
+
+  .park-touch-actions {
+    display: grid;
+    grid-template-columns: repeat(2, var(--park-touch-size));
+    justify-self: end;
+    gap: 5px;
+  }
+
+  .park-touch-button {
+    display: grid;
+    place-items: center;
+    width: var(--park-touch-size);
+    height: var(--park-touch-size);
+    padding: 0;
+    border-radius: 50%;
+    background: #181b2ab3;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .park-lifecycle { bottom: calc(var(--park-touch-size) + var(--park-touch-inset) + 6px); }
 }
 </style>

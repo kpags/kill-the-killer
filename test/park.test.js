@@ -224,6 +224,26 @@ test('movement follows area edges in order and leaves idle players behind', () =
   assert.deepEqual([player.x, player.y], [172, 215])
 })
 
+test('joystick input moves at fractional angles, keeps sprite facing valid, and rejects out-of-range axes', () => {
+  const game = createEmptyPark(roster())
+  const player = game.players.get('0')
+  const { x, y } = player
+  setParkInput(player, { x: -0.8, y: 0.3, sprint: false }, 20)
+  const input = player.input
+  for (const axes of [{ x: 1.01, y: 0 }, { x: 0, y: -1.01 }, { x: NaN, y: 0 }, { x: '0.8', y: 0 }]) {
+    setParkInput(player, { ...axes, sprint: true }, 25)
+    assert.equal(player.input, input)
+  }
+  stepPark(game, 50, 50)
+  assert.ok(player.x < x && player.y > y)
+  assert.ok(Math.abs((player.y - y) / (player.x - x) - input.y / input.x) < 1e-6)
+  assert.equal(player.facing, -1)
+  setParkInput(player, { x: 0, y: 0, sprint: false }, 60)
+  const stopped = [player.x, player.y]
+  stepPark(game, 50, 100)
+  assert.deepEqual([player.x, player.y], stopped)
+})
+
 test('players sprint at 181.5 map pixels per second, drain stamina for five seconds, and recover in three-second steps', () => {
   const game = createEmptyPark(roster())
   const player = game.players.get('0')

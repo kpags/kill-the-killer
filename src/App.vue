@@ -22,6 +22,17 @@ const homeSettingsOpen = ref(false)
 const homeSettings = ref(null)
 const homeSettingsButton = ref(null)
 const audioSettings = ref(loadAudioSettings())
+const portraitQuery = window.matchMedia('(hover: none) and (any-pointer: coarse) and (orientation: portrait)')
+const portraitBlocked = ref(portraitQuery.matches)
+const landscapePrompt = ref(null)
+
+function updateOrientation() {
+  portraitBlocked.value = portraitQuery.matches
+  const dialog = landscapePrompt.value
+  if (portraitBlocked.value === dialog.open) return
+  if (portraitBlocked.value) dialog.showModal()
+  else dialog.close()
+}
 
 function loadAudioSettings() {
   const normalize = (value) => Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : defaultAudioLevel
@@ -113,6 +124,8 @@ async function closeHomeSettings() {
 }
 
 onMounted(() => {
+  updateOrientation()
+  portraitQuery.addEventListener('change', updateOrientation)
   connection.restore()
   window.render_game_to_text = () => JSON.stringify(game.value?.readState() ?? lobby.value?.readState() ?? {
     screen: homeSettingsOpen.value ? 'settings' : joinFormOpen.value ? 'join' : 'home',
@@ -122,6 +135,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  portraitQuery.removeEventListener('change', updateOrientation)
   connection.dispose()
   delete window.render_game_to_text
 })
@@ -135,6 +149,7 @@ onUnmounted(() => {
     :state="park"
     :player-id="playerId"
     :reconnecting="reconnecting"
+    :portrait-blocked="portraitBlocked"
     :input="connection.input"
     :command="connection.command"
     :leave="leaveRoom"
@@ -188,6 +203,9 @@ onUnmounted(() => {
       </p>
     </section>
   </main>
+  <dialog ref="landscapePrompt" class="landscape-prompt" aria-labelledby="landscape-message" @cancel.prevent>
+    <p id="landscape-message">Turn to landscape for better experience</p>
+  </dialog>
 </template>
 
 <style>
@@ -204,6 +222,31 @@ onUnmounted(() => {
 body {
   margin: 0;
 }
+
+body:has(.landscape-prompt[open]) { overflow: hidden; }
+
+.landscape-prompt[open] {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 24px;
+  border: 0;
+  background: #000;
+  color: #fff;
+  text-align: center;
+  font-size: clamp(1.125rem, 5vw, 1.5rem);
+  font-weight: 700;
+  touch-action: none;
+}
+
+.landscape-prompt::backdrop { background: #000; }
+.landscape-prompt p { max-width: 24ch; margin: 0; }
 
 .game-scene {
   --scene-art: url('../assets/images/background/desktop.png');
